@@ -140,7 +140,6 @@ def GP_pred(mod, x, y):
     #         K[i][j] = temp
     #         K[j][i] = temp
     K = mod.sigma2*torch.exp(-torch.cdist(u,u, p = 2)**2/l)
-    print(K)
     B = K + mod.sigma2_n*torch.eye(mod.N)
     L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
     alpha = torch.cholesky_solve(y,L)
@@ -170,7 +169,6 @@ def GP_pred_temp(u, l, sigma2, N, y):
     L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
     alpha = torch.cholesky_solve(y,L)
     f = K @ alpha
-
     ym = y - f
     LL_GP = 0.5*torch.sum(ym**2)/mod.sigma2_n
 
@@ -216,10 +214,8 @@ plt.show()
 
 T = 500
 S = 0 # Number of samples
-L = 5 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
+L = 10 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
 G = torch.zeros(T)
-ep1 = 0.0008
-ep = ep1
 fm = torch.zeros((net.N,1))
 um = torch.zeros((net.N,1))
 
@@ -246,7 +242,7 @@ for t in range(T):
     U_p = U
 
     # Leapfrog
-    ep = torch.rand(1)*0.0007
+    ep = torch.rand(1)*0.0001
     for i in range(L):
         rp = rp - ep*grad_U_p*0.5
         theta_p = theta_p + ep*rp
@@ -264,12 +260,8 @@ for t in range(T):
     K = torch.sum(r**2)/2
     Kp = torch.sum(rp**2)/2
     alpha = -U_p - Kp + U + K
-    #print("U_GP_p: ", U_GP_p)
-    #print("U_NN_p: ", U_NN_p)
-    print("Kp: ", Kp)
 
-    #print("U_GP: ", U_GP)
-    #print("U_NN: ", U_NN)
+    print("Kp: ", Kp)
     print("K: ", K)
     print("Grad Norm: ", G[t] )
     print("Ep: ", ep)
@@ -315,7 +307,6 @@ plt.show()
 
 # Targets
 plt.plot(x_space.data, y , c = 'blue')
-#plt.plot(x_space.data, ftrue.data, 'm--')
 plt.plot(x_space.data, f_mean.data, 'g--')
 plt.legend(['y', 'GP(u) = ybar', 'GP(uhat) = yhat'])
 
@@ -325,7 +316,6 @@ plt.show()
 
 plt.plot(G)
 plt.title(('||Grad_U_p||_2.',' ep = ',str(ep), 'L = ', str(L)))
-plt.ylim( (0, 200) )
 plt.show()
 
 
