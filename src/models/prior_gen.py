@@ -113,8 +113,8 @@ def SE_kern(x, l, sigma2, N):
     for i in range(N):
         for j in range(i,N):
             temp = sigma2*torch.exp(-(x[i] - x[j])**2/l)
-            K[i][j] = temp
-            K[j][i] = temp
+            K[i,j] = temp
+            K[j,i] = temp
     return K
 
 def GP_prior(u, l, sigma2, sigma2_n , N):
@@ -131,31 +131,35 @@ def GP_pred(mod, x, y):
     u = mod.forward(x)
     #K = SE_kern(u, mod.l, mod.sigma2, mod.N)
 
-    # # Calculate Kernel
-    K = torch.zeros([mod.N,mod.N])
     l = 2*mod.l*mod.l
-    for i in range(mod.N):
-        for j in range(i,mod.N):
-            temp = mod.sigma2*torch.exp(-(u[i] - u[j])**2/l)
-            K[i,j] = temp
+    K = mod.sigma2*torch.exp(-torch.cdist(u,u, p = 2)**2/l)
+
+
+    B = K + mod.sigma2_n*torch.eye(mod.N)
 
     L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
     alpha = torch.cholesky_solve(y,L)
     #alpha, LU = torch.solve(y, B)
 
-    #L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
-    #alpha = torch.cholesky_solve(y,L)
-    alpha, L = torch.solve(y, B)
     f = K @ alpha
 
     ym = y - f
     LL_GP = torch.sum(ym**2)/mod.sigma2_n
 
     # Prior
+
+    temp, LU = torch.solve(f, K + 1e-5*torch.eye(mod.N))
+    K_LU, pivot = torch.lu(K)
+    print(torch.lu_unpack(LU, pivot))
+    #LP_GP = t1.t() @ f + torch.logdet(L)
+
     L  = torch.cholesky(K + 1e-5*torch.eye(mod.N))
     t1 = torch.cholesky_solve(f, L)
-    #t1, L = torch.solve(f, K + 1e-5*torch.eye(mod.N))
     LP_GP = t1.t() @ f + torch.sum(torch.log(torch.diag(L)))
+
+
+   
+
     U_GP = LL_GP + LP_GP
     return f, U_GP
 
@@ -267,10 +271,8 @@ for t in range(T):
 
 #%% 
 # Average over samples
-f_mean = fm/(S+37)
-u_mean = um/(S+37)
-net.update_param(theta_true)
-ftrue, ign = GP_pred(net, x_space, y) # GP Energy
+f_mean = fm/(S)
+u_mean = um/(S)
 
 #%% Plot
 # Latent space
