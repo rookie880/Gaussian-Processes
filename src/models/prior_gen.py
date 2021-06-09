@@ -104,7 +104,7 @@ def SE_kern(x, l, sigma2, N):
             K[i][j] = sigma2*torch.exp(-temp/l)
     return K
 
-def GP_prior(u, l, sigma2, sigma2_n ,N):
+def GP_prior(u, l, sigma2, sigma2_n , N):
     K = SE_kern(u, l, sigma2, N)
     B = K + sigma2_n*torch.eye(N)
     f = torch.distributions.MultivariateNormal(torch.zeros(N), B)
@@ -136,17 +136,31 @@ def GP_pred(mod, x, y):
     U_GP = LL_GP + LP_GP
     return f, U_GP
 
+def M_func(t1, t2, k, x, N):
+    u = torch.zeros((N,1), requires_grad=True) # M(x) = u
+    for i in range(N):
+        if x[i] < t1:
+            u[i] = k/(t1-min(x))*x[i] - k/(t1-min(x))*min(x)
+        elif x[i] >= t1 and x[i] < t2:
+            u[i] = k
+        else:
+            u[i] = k/(max(x)-t2)*x[i] - k/(max(x)-t2)*t2  + k 
+    return u
+
+#%%
 net = NN()
 net.get_total_no_param()
 net.prior()
 theta_true = net.get_param()
 
-# Generate Data and Plot
+## Generate Data and Plot ##
 x_space = torch.linspace(-5, 5, net.N)
 x_space = torch.reshape(x_space, (net.N,1))
-u = net.forward(x_space)
+u = M_func(-2,2,2, x_space, net.N) #u = net.forward(x_space)
+
 y = GP_prior(u, net.l, net.sigma2, net.sigma2_n, net.N)
-#% Plot data
+
+## Plot data ##
 # Latent space
 plt.plot(x_space.data, u.data, c = 'red')
 plt.show()
@@ -154,26 +168,24 @@ plt.show()
 plt.plot(x_space, y, c = 'blue')
 plt.legend(['M(x)=u', 'y=GP(u)'])
 plt.show()
-#%% Sampling
-net.prior()
 
-T = 500
-S = 0 # Number of samples
-L = 5 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
-G = torch.zeros(T)
-ep1 = 0.0007
-ep = ep1
-fm = torch.zeros((net.N,1))
-um = torch.zeros((net.N,1))
+#%% Sampling
 
 # Init
+net.prior()
 theta = net.get_param()
 U_NN, ign = net.U_NN(x_space, theta)
 f, U_GP = GP_pred(net, x_space, y)
 U = U_GP + U_NN
-
 grad_U = net.grad_calc(U)
+fm = torch.zeros((net.N,1))
+um = torch.zeros((net.N,1))
 
+#%% HMCMC
+T = 2000
+S = 0 # Number of samples
+L = 6 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
+G = torch.zeros(T)
 for t in range(T):
     rp = torch.normal(torch.zeros(net.total_no_param), torch.ones(net.total_no_param))
     rp = torch.reshape(rp, (net.total_no_param,1))
@@ -183,6 +195,7 @@ for t in range(T):
     U_p = U
 
     # Leapfrog
+    ep = torch.rand(1)*0.01 + 0.002
     for i in range(L):
         rp = rp - ep*grad_U_p*0.5
         theta_p = theta_p + ep*rp
@@ -207,9 +220,11 @@ for t in range(T):
     #print("U_NN: ", U_NN)
     print("K: ", K)
     print("Grad Norm: ", G[t] )
-
+    print("Ep: ", ep)
+ 
     if t > 40:
-        ep = ep
+        ep = 0.001
+        L = 7
         #ep = 0.0005
 
     
@@ -265,8 +280,7 @@ plt.show()
 
 plt.plot(G)
 plt.title(('||Grad_U_p||_2.', 'ep1 = ',str(ep1), ' ep2 = ',str(ep), 'L = ', str(L)))
-#plt.ylim((min(G), torch.mean(G) + torch.std(G)))
-plt.ylim((0, 350))
+plt.ylim( (0, 200) )
 plt.show()
 
 
