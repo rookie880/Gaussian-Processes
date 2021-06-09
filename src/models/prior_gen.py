@@ -19,23 +19,23 @@ class NN(nn.Module):
         super().__init__()
         self.L1_fi = 1; self.L1_fo = 4
         self.L2_fi = self.L1_fo; self.L2_fo = 4
-        self.L3_fi = self.L2_fo; self.L3_fo = 2
-        self.l4_fi = self.L3_fo; self.l4_fo = 1
+        self.L3_fi = self.L2_fo; self.L3_fo = 1
+        #self.l4_fi = self.L3_fo; self.l4_fo = 1
 
         self.structure = torch.tensor([[self.L1_fi, self.L1_fo], [self.L2_fi, self.L2_fo], [self.L3_fi, self.L3_fo]])
 
-        # self.L1 = nn.Linear(self.L1_fi, self.L1_fo)
-        # self.A1 = nn.Tanh()
-        # self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
-        # self.A2 = nn.Tanh()
-        # self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
         self.L1 = nn.Linear(self.L1_fi, self.L1_fo)
-        self.A1 = nn.ReLU()
+        self.A1 = nn.Tanh()
         self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
-        self.A2 = nn.ReLU()
+        self.A2 = nn.Tanh()
         self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
-        self.A3 = nn.Tanh()
-        self.L4 = nn.Linear(self.l4_fi, self.l4_fo)
+        # self.L1 = nn.Linear(self.L1_fi, self.L1_fo)
+        # self.A1 = nn.ReLU()
+        # self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
+        # self.A2 = nn.ReLU()
+        # self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
+        # self.A3 = nn.ReLU()
+        # self.L4 = nn.Linear(self.l4_fi, self.l4_fo)
 
 
         # Hyperparameters
@@ -47,9 +47,9 @@ class NN(nn.Module):
         x = self.L2(x)
         x = self.A2(x)
         x = self.L3(x)
-        x = self.A3(x)
-        u = self.L4(x)
-        return u
+        #x = self.A3(x)
+        #u = self.L4(x)
+        return x
 
     def prior(self):
         theta_sample = torch.normal(torch.zeros(self.total_no_param), torch.ones(self.total_no_param)*self.sigma_prior)
@@ -131,50 +131,28 @@ def GP_pred(mod, x, y):
     u = mod.forward(x)
     #K = SE_kern(u, mod.l, mod.sigma2, mod.N)
 
-    # Calculate Kernel
-    K = torch.zeros([mod.N,mod.N])
-    l = 2*mod.l*mod.l
-    # for i in range(mod.N):
-    #     for j in range(i,mod.N):
-    #         temp = mod.sigma2*torch.exp(-(x[i] - x[j])**2/l)
-    #         K[i][j] = temp
-    #         K[j][i] = temp
-    K = mod.sigma2*torch.exp(-torch.cdist(u,u, p = 2)**2/l)
-    B = K + mod.sigma2_n*torch.eye(mod.N)
-    L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
-    alpha = torch.cholesky_solve(y,L)
-    f = K @ alpha
-
-    ym = y - f
-    LL_GP = 0.5*torch.sum(ym**2)/mod.sigma2_n
-
-    # Prior
-    L  = torch.cholesky(K + 1e-5*torch.eye(mod.N))
-    t1 = torch.cholesky_solve(f, L)
-    LP_GP = t1.t() @ f + torch.sum(torch.log(torch.diag(L)))
-    U_GP = LL_GP + LP_GP
-    return f, U_GP
-
-def GP_pred_temp(u, l, sigma2, N, y):
-    # Calculate Kernel
+    # # Calculate Kernel
     K = torch.zeros([mod.N,mod.N])
     l = 2*mod.l*mod.l
     for i in range(mod.N):
         for j in range(i,mod.N):
             temp = mod.sigma2*torch.exp(-(u[i] - u[j])**2/l)
-            K[i][j] = temp
-            K[j][i] = temp
-
+            K[i,j] = temp
+            K[j,i] = temp
+    #K = mod.sigma2*torch.exp(-torch.cdist(u,u, p = 2)**2/l)
     B = K + mod.sigma2_n*torch.eye(mod.N)
-    L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
-    alpha = torch.cholesky_solve(y,L)
+    #L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
+    #alpha = torch.cholesky_solve(y,L)
+    alpha, L = torch.solve(y, B)
     f = K @ alpha
+
     ym = y - f
-    LL_GP = 0.5*torch.sum(ym**2)/mod.sigma2_n
+    LL_GP = torch.sum(ym**2)/mod.sigma2_n
 
     # Prior
     L  = torch.cholesky(K + 1e-5*torch.eye(mod.N))
     t1 = torch.cholesky_solve(f, L)
+    #t1, L = torch.solve(f, K + 1e-5*torch.eye(mod.N))
     LP_GP = t1.t() @ f + torch.sum(torch.log(torch.diag(L)))
     U_GP = LL_GP + LP_GP
     return f, U_GP
@@ -199,8 +177,8 @@ theta_true = net.get_param()
 ## Generate Data and Plot ##
 x_space = torch.linspace(-5, 5, net.N)
 x_space = torch.reshape(x_space, (net.N,1))
-u = M_func(-2,2,2, x_space, net.N) #u = net.forward(x_space)
-
+#u = M_func(-2,2,2, x_space, net.N) 
+u = net.forward(x_space)
 y = GP_prior(u, net.l, net.sigma2, net.sigma2_n, net.N)
 
 ## Plot data ##
@@ -212,9 +190,9 @@ plt.plot(x_space, y, c = 'blue')
 plt.legend(['M(x)=u', 'y=GP(u)'])
 plt.show()
 
-T = 500
+T = 1000
 S = 0 # Number of samples
-L = 10 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
+L = 6 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
 G = torch.zeros(T)
 fm = torch.zeros((net.N,1))
 um = torch.zeros((net.N,1))
@@ -231,7 +209,7 @@ fm = torch.zeros((net.N,1))
 um = torch.zeros((net.N,1))
 
 #%% HMCMC
-T = 2000
+T = 1000
 L = 6 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
 G = torch.zeros(T)
 for t in range(T):
@@ -242,7 +220,7 @@ for t in range(T):
     U_p = U
 
     # Leapfrog
-    ep = torch.rand(1)*0.0001
+    ep = torch.rand(1)*0.01
     for i in range(L):
         rp = rp - ep*grad_U_p*0.5
         theta_p = theta_p + ep*rp
