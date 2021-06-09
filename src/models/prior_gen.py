@@ -19,7 +19,8 @@ class NN(nn.Module):
         super().__init__()
         self.L1_fi = 1; self.L1_fo = 4
         self.L2_fi = self.L1_fo; self.L2_fo = 4
-        self.L3_fi = self.L2_fo; self.L3_fo = 1
+        self.L3_fi = self.L2_fo; self.L3_fo = 2
+        self.l4_fi = self.L3_fo; self.l4_fo = 1
 
         self.structure = torch.tensor([[self.L1_fi, self.L1_fo], [self.L2_fi, self.L2_fo], [self.L3_fi, self.L3_fo]])
 
@@ -33,10 +34,22 @@ class NN(nn.Module):
         self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
         self.A2 = nn.ReLU()
         self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
+        self.A3 = nn.Tanh()
+        self.L4 = nn.Linear(self.l4_fi, self.l4_fo)
 
 
         # Hyperparameters
         self.l = torch.sqrt(torch.tensor(0.1)); self.N = 50; self.sigma2 = 1; self.sigma2_n = 0.001; self.sigma_prior = 1; self.total_no_param = 0
+
+    def forward(self, x):
+        x = self.L1(x)
+        x = self.A1(x)
+        x = self.L2(x)
+        x = self.A2(x)
+        x = self.L3(x)
+        x = self.A3(x)
+        u = self.L4(x)
+        return u
 
     def prior(self):
         theta_sample = torch.normal(torch.zeros(self.total_no_param), torch.ones(self.total_no_param)*self.sigma_prior)
@@ -64,14 +77,6 @@ class NN(nn.Module):
         lp_NN = torch.sum(theta**2)/self.sigma_prior
         res = ll_NN + lp_NN
         return res, u
-
-    def forward(self, x):
-        x = self.L1(x)
-        x = self.A1(x)
-        x = self.L2(x)
-        x = self.A2(x)
-        u = self.L3(x)
-        return u
 
     def update_param(self, theta):
         theta_dict = self.state_dict()
@@ -209,7 +214,14 @@ plt.plot(x_space, y, c = 'blue')
 plt.legend(['M(x)=u', 'y=GP(u)'])
 plt.show()
 
-#%% Sampling
+T = 500
+S = 0 # Number of samples
+L = 5 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
+G = torch.zeros(T)
+ep1 = 0.0008
+ep = ep1
+fm = torch.zeros((net.N,1))
+um = torch.zeros((net.N,1))
 
 # Init
 net.prior()
