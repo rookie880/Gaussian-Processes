@@ -10,6 +10,7 @@ from torch.nn.modules.activation import ReLU
 from torch.overrides import get_overridable_functions
 from torch.autograd import grad
 from torch.quantization.quantize import propagate_qconfig_
+import gpytorch
 #import cProfile
 #import re
 
@@ -107,14 +108,16 @@ class NN(nn.Module):
         theta = torch.cat(theta)
         return theta
 
-def SE_kern(x, l, sigma2, N):
-    K = torch.zeros([N,N])
-    l = 2*l*l
-    for i in range(N):
-        for j in range(i,N):
-            temp = sigma2*torch.exp(-(x[i] - x[j])**2/l)
-            K[i,j] = temp
-            K[j,i] = temp
+def SE_kern(u, l, sigma2, N):
+    # K = torch.zeros([N,N])
+    # l = 2*l*l
+    # for i in range(N):
+    #     for j in range(i,N):
+    #         temp = sigma2*torch.exp(-(x[i] - x[j])**2/l)
+    #         K[i,j] = temp
+    #         K[j,i] = temp
+    temp = lazy_covar_matrix = K_module(u)
+    K = temp.evaluate()
     return K
 
 def GP_prior(u, l, sigma2, sigma2_n , N):
@@ -129,17 +132,12 @@ def GP_prior(u, l, sigma2, sigma2_n , N):
 
 def GP_pred(mod, x, y):
     u = mod.forward(x)
-    #K = SE_kern(u, mod.l, mod.sigma2, mod.N)
-
-    l = 2*mod.l*mod.l
-    K = mod.sigma2*torch.exp(-torch.cdist(u,u, p = 2)**2/l)
-
+    K = SE_kern(u, mod.l, mod.sigma2, mod.N) #l = 2*mod.l*mod.l #K = mod.sigma2*torch.exp(-torch.cdist(u,u, p = 2)**2/l)
 
     B = K + mod.sigma2_n*torch.eye(mod.N)
 
-    L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
+    L = torch.cholesky(B)
     alpha = torch.cholesky_solve(y,L)
-    #alpha, LU = torch.solve(y, B)
 
     f = K @ alpha
 
@@ -147,18 +145,9 @@ def GP_pred(mod, x, y):
     LL_GP = torch.sum(ym**2)/mod.sigma2_n
 
     # Prior
-
-    temp, LU = torch.solve(f, K + 1e-5*torch.eye(mod.N))
-    K_LU, pivot = torch.lu(K)
-    print(torch.lu_unpack(LU, pivot))
-    #LP_GP = t1.t() @ f + torch.logdet(L)
-
-    L  = torch.cholesky(K + 1e-5*torch.eye(mod.N))
+    L  = torch.cholesky(K + 1e-3*torch.eye(mod.N))
     t1 = torch.cholesky_solve(f, L)
     LP_GP = t1.t() @ f + torch.sum(torch.log(torch.diag(L)))
-
-
-   
 
     U_GP = LL_GP + LP_GP
     return f, U_GP
@@ -179,6 +168,9 @@ net = NN()
 net.get_total_no_param()
 net.prior()
 theta_true = net.get_param()
+
+# Kernel Module
+K_module = gpytorch.kernels.RBFKernel()
 
 ## Generate Data and Plot ##
 x_space = torch.linspace(-5, 5, net.N)
@@ -215,7 +207,7 @@ fm = torch.zeros((net.N,1))
 um = torch.zeros((net.N,1))
 
 #%% HMCMC
-T = 1000
+T = 5000
 L = 6 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
 G = torch.zeros(T)
 for t in range(T):
@@ -245,10 +237,10 @@ for t in range(T):
     Kp = torch.sum(rp**2)/2
     alpha = -U_p - Kp + U + K
 
-    print("Kp: ", Kp)
-    print("K: ", K)
-    print("Grad Norm: ", G[t] )
-    print("Ep: ", ep)
+    # print("Kp: ", Kp)
+    # print("K: ", K)
+    # print("Grad Norm: ", G[t] )
+    # print("Ep: ", ep)
     
     if torch.log(torch.rand(1)) < alpha:
         theta = theta_p
@@ -257,14 +249,14 @@ for t in range(T):
         U_GP = U_GP_p  ## GP potential Energy update
         U = U_p ## Potential Energy Update
 
-        print('Sample')
-        if t > 40:
+        #print('Sample')
+        if t > 1000:
             fm = fm + f_p
             um = um + up
             S = S + 1
     else:
         net.update_param(theta)
-        print('No Sample')
+        #print('No Sample')
     print(t)
     print(S)
     #cProfile.run('re.compile("foo|bar")')
