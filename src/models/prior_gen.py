@@ -1,4 +1,5 @@
 #%% Libraries
+import cProfile
 from os import RTLD_NODELETE
 import numpy as np
 from numpy.lib.function_base import rot90
@@ -9,6 +10,8 @@ from torch.nn.modules.activation import ReLU
 from torch.overrides import get_overridable_functions
 from torch.autograd import grad
 from torch.quantization.quantize import propagate_qconfig_
+#import cProfile
+#import re
 
 #%% Functions
 class NN(nn.Module):
@@ -20,11 +23,17 @@ class NN(nn.Module):
 
         self.structure = torch.tensor([[self.L1_fi, self.L1_fo], [self.L2_fi, self.L2_fo], [self.L3_fi, self.L3_fo]])
 
+        # self.L1 = nn.Linear(self.L1_fi, self.L1_fo)
+        # self.A1 = nn.Tanh()
+        # self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
+        # self.A2 = nn.Tanh()
+        # self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
         self.L1 = nn.Linear(self.L1_fi, self.L1_fo)
-        self.A1 = nn.Tanh()
+        self.A1 = nn.ReLU()
         self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
-        self.A2 = nn.Tanh()
+        self.A2 = nn.ReLU()
         self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
+
 
         # Hyperparameters
         self.l = torch.sqrt(torch.tensor(0.1)); self.N = 50; self.sigma2 = 1; self.sigma2_n = 0.001; self.sigma_prior = 1; self.total_no_param = 0
@@ -82,7 +91,6 @@ class NN(nn.Module):
         for g in temp:
             grads.append(g.view(-1))
         grads = torch.cat(grads)
-        grads = torch.reshape(grads, (self.total_no_param,1))
         return grads
 
     def get_param(self):
@@ -92,16 +100,16 @@ class NN(nn.Module):
             temp = theta_dict[param_tensor]
             theta.append(temp.view(-1))
         theta = torch.cat(theta)
-        theta = torch.reshape(theta, (self.total_no_param,1))
         return theta
 
 def SE_kern(x, l, sigma2, N):
     K = torch.zeros([N,N])
     l = 2*l*l
     for i in range(N):
-        for j in range(N):
-            temp = (x[i] - x[j])**2
-            K[i][j] = sigma2*torch.exp(-temp/l)
+        for j in range(i,N):
+            temp = sigma2*torch.exp(-(x[i] - x[j])**2/l)
+            K[i][j] = temp
+            K[j][i] = temp
     return K
 
 def GP_prior(u, l, sigma2, sigma2_n , N):
@@ -116,23 +124,55 @@ def GP_prior(u, l, sigma2, sigma2_n , N):
 
 def GP_pred(mod, x, y):
     u = mod.forward(x)
-    K = SE_kern(u, mod.l, mod.sigma2, mod.N)
+    #K = SE_kern(u, mod.l, mod.sigma2, mod.N)
 
+    # Calculate Kernel
+    K = torch.zeros([mod.N,mod.N])
+    l = 2*mod.l*mod.l
+    # for i in range(mod.N):
+    #     for j in range(i,mod.N):
+    #         temp = mod.sigma2*torch.exp(-(x[i] - x[j])**2/l)
+    #         K[i][j] = temp
+    #         K[j][i] = temp
+    K = mod.sigma2*torch.exp(-torch.cdist(u,u, p = 2)**2/l)
+    print(K)
     B = K + mod.sigma2_n*torch.eye(mod.N)
     L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
-    alpha, LU   = torch.solve(y,L)
-    alpha, LU = torch.solve(alpha, torch.transpose(L, 0, 1))
-    f = torch.matmul(K,alpha)
+    alpha = torch.cholesky_solve(y,L)
+    f = K @ alpha
 
     ym = y - f
     LL_GP = 0.5*torch.sum(ym**2)/mod.sigma2_n
 
     # Prior
     L  = torch.cholesky(K + 1e-5*torch.eye(mod.N))
-    t1, LU = torch.solve(f, L)
-    t1, LU = torch.solve(t1, torch.transpose(L, 0, 1))
-    t1 = torch.transpose(t1, 1, 0)
-    LP_GP = 0.5*t1.matmul(f) + torch.sum(torch.log(torch.diag(L)))
+    t1 = torch.cholesky_solve(f, L)
+    LP_GP = t1.t() @ f + torch.sum(torch.log(torch.diag(L)))
+    U_GP = LL_GP + LP_GP
+    return f, U_GP
+
+def GP_pred_temp(u, l, sigma2, N, y):
+    # Calculate Kernel
+    K = torch.zeros([mod.N,mod.N])
+    l = 2*mod.l*mod.l
+    for i in range(mod.N):
+        for j in range(i,mod.N):
+            temp = mod.sigma2*torch.exp(-(u[i] - u[j])**2/l)
+            K[i][j] = temp
+            K[j][i] = temp
+
+    B = K + mod.sigma2_n*torch.eye(mod.N)
+    L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
+    alpha = torch.cholesky_solve(y,L)
+    f = K @ alpha
+
+    ym = y - f
+    LL_GP = 0.5*torch.sum(ym**2)/mod.sigma2_n
+
+    # Prior
+    L  = torch.cholesky(K + 1e-5*torch.eye(mod.N))
+    t1 = torch.cholesky_solve(f, L)
+    LP_GP = t1.t() @ f + torch.sum(torch.log(torch.diag(L)))
     U_GP = LL_GP + LP_GP
     return f, U_GP
 
@@ -177,25 +217,24 @@ theta = net.get_param()
 U_NN, ign = net.U_NN(x_space, theta)
 f, U_GP = GP_pred(net, x_space, y)
 U = U_GP + U_NN
+S = 0 # Number of samples
 grad_U = net.grad_calc(U)
 fm = torch.zeros((net.N,1))
 um = torch.zeros((net.N,1))
 
 #%% HMCMC
 T = 2000
-S = 0 # Number of samples
 L = 6 # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
 G = torch.zeros(T)
 for t in range(T):
     rp = torch.normal(torch.zeros(net.total_no_param), torch.ones(net.total_no_param))
-    rp = torch.reshape(rp, (net.total_no_param,1))
     r = rp 
     theta_p = theta
     grad_U_p = grad_U
     U_p = U
 
     # Leapfrog
-    ep = torch.rand(1)*0.01 + 0.002
+    ep = torch.rand(1)*0.0007
     for i in range(L):
         rp = rp - ep*grad_U_p*0.5
         theta_p = theta_p + ep*rp
@@ -206,6 +245,7 @@ for t in range(T):
         f_p, U_GP_p = GP_pred(net, x_space, y) # GP Pot. Energy
         U_p = U_GP_p + U_NN_p # Proposed Pot. Energy
         grad_U_p = net.grad_calc(U_p)
+
         rp = rp - ep*grad_U_p*0.5
 
     G[t] = torch.sqrt(torch.sum(grad_U_p**2))/net.total_no_param # Normalizes the gradient with the number of parameters to be sampled
@@ -221,12 +261,6 @@ for t in range(T):
     print("K: ", K)
     print("Grad Norm: ", G[t] )
     print("Ep: ", ep)
- 
-    if t > 40:
-        ep = 0.001
-        L = 7
-        #ep = 0.0005
-
     
     if torch.log(torch.rand(1)) < alpha:
         theta = theta_p
@@ -245,11 +279,12 @@ for t in range(T):
         print('No Sample')
     print(t)
     print(S)
+    #cProfile.run('re.compile("foo|bar")')
 
 #%% 
 # Average over samples
-f_mean = fm/S
-u_mean = um/S
+f_mean = fm/(S+37)
+u_mean = um/(S+37)
 net.update_param(theta_true)
 ftrue, ign = GP_pred(net, x_space, y) # GP Energy
 
@@ -262,24 +297,22 @@ plt.ylabel('u')
 plt.show()
 plt.plot(x_space.data, u_mean.data, 'r--')
 plt.legend(['Mhat(x) = uhat'])
-plt.title(('ep1 = ',str(ep1), ' ep2 = ',str(ep), 'L = ', str(L)))
 plt.xlabel('x')
 plt.ylabel('u')
 plt.show()
 
 # Targets
 plt.plot(x_space.data, y , c = 'blue')
-plt.plot(x_space.data, ftrue.data, 'm--')
+#plt.plot(x_space.data, ftrue.data, 'm--')
 plt.plot(x_space.data, f_mean.data, 'g--')
 plt.legend(['y', 'GP(u) = ybar', 'GP(uhat) = yhat'])
 
-plt.title(('ep1 = ',str(ep1), ' ep2 = ',str(ep), 'L = ', str(L)))
 plt.xlabel('u')
 plt.ylabel('y')
 plt.show()
 
 plt.plot(G)
-plt.title(('||Grad_U_p||_2.', 'ep1 = ',str(ep1), ' ep2 = ',str(ep), 'L = ', str(L)))
+plt.title(('||Grad_U_p||_2.',' ep = ',str(ep), 'L = ', str(L)))
 plt.ylim( (0, 200) )
 plt.show()
 
