@@ -138,9 +138,11 @@ def GP_pred(mod, x, y):
         for j in range(i,mod.N):
             temp = mod.sigma2*torch.exp(-(u[i] - u[j])**2/l)
             K[i,j] = temp
-            K[j,i] = temp
-    #K = mod.sigma2*torch.exp(-torch.cdist(u,u, p = 2)**2/l)
-    B = K + mod.sigma2_n*torch.eye(mod.N)
+
+    L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
+    alpha = torch.cholesky_solve(y,L)
+    #alpha, LU = torch.solve(y, B)
+
     #L = torch.cholesky(B + 1e-5*torch.eye(mod.N))
     #alpha = torch.cholesky_solve(y,L)
     alpha, L = torch.solve(y, B)
