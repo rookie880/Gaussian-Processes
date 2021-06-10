@@ -1,23 +1,12 @@
 # %% Libraries
-# import cProfile
-# from os import RTLD_NODELETE
-# import numpy as np
-# from numpy.lib.function_base import rot90
 import torch
 from torch import nn
 import matplotlib.pyplot as plt
-# from torch import random
-# from torch.nn.modules.activation import ReLU
-# from torch.overrides import get_overridable_functions
 from torch.autograd import grad
-# from torch.quantization.quantize import propagate_qconfig_
 import gpytorch
 
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
-
-# import cProfile
-# import re
 
 # %% Functions
 class NN(nn.Module):
@@ -46,9 +35,9 @@ class NN(nn.Module):
         # self.A3 = nn.ReLU()
         # self.L4 = nn.Linear(self.l4_fi, self.l4_fo)
 
-        # Hyperparameters
+        # Hyper-parameters
         self.l = torch.sqrt(torch.tensor(0.1))
-        self.N = 50
+        self.N = 100
         self.sigma2 = 1
         self.sigma2_n = 0.0001
         self.sigma_prior = 1
@@ -162,8 +151,8 @@ def gp_pred(mod, x_pred, y_pred):
     t1 = torch.cholesky_solve(f_pred, L_pred)
     LP_GP = t1.t() @ f_pred + torch.sum(torch.log(torch.diag(L_pred)))
 
-    out = LL_GP + LP_GP
-    return f_pred, out
+    energy_gp = LL_GP + LP_GP
+    return f_pred, energy_gp
 
 
 def m_spline_func(t1, t2, k, x, N):
@@ -202,18 +191,16 @@ def gaussian_mixture_2(m, sigma2, N):
 net = NN()
 net.get_total_no_param()
 net.prior()
-theta_true = net.get_param()
+theta_prior = net.get_param()
 
-# Kernel Module
+# Kernel Module #
 K_module = gpytorch.kernels.RBFKernel()
 K_module.lengthscale = net.l
 K_module.outputscale = net.sigma2
 
-# Generate Data and Plot ##
+# Generate Data and Plot #
 x_space = gaussian_mixture_2(4, 2.0, net.N)
-# x_space = torch.linspace(-5, 5, net.N)#x_space = torch.reshape(x_space, (net.N,1))
 u = m_square_func(0, x_space, net.N)
-# u = M_func(-2,2,2, x_space, net.N) #u = net.forward(x_space)
 y = gp_prior(net, u)
 
 # Plot data #
@@ -225,11 +212,11 @@ plt.legend(['M(x)=u', 'y=GP(u)'])
 plt.show()
 
 # %%
-T = 1000
+T = 10000
 S = 0  # Number of samples
 L = 5  # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
 ep0 = 0.01
-M = 50  # Number of cycles
+M = 3  # Number of cycles
 ep_space = ep0 * 0.5 * (torch.cos(
     torch.pi * torch.fmod(torch.linspace(0, T, T), torch.ceil(torch.tensor(T) / torch.tensor(M))) / torch.ceil(
         torch.tensor(T) / torch.tensor(M))) + 1)
@@ -248,6 +235,8 @@ f, U_GP = gp_pred(net, x_space, y)
 U = U_GP + U_NN
 um_samples = []
 grad_U = net.grad_calc(U)
+x_test = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
+
 
 # H-MCMC
 for t in range(T):
@@ -272,8 +261,7 @@ for t in range(T):
         grad_U_p = net.grad_calc(U_p)
         rp = rp - ep * grad_U_p * 0.5
 
-    G[t] = torch.sqrt(torch.sum(
-        grad_U_p ** 2)) / net.total_no_param  # Normalizes the gradient with the number of parameters to be sampled
+    G[t] = torch.sqrt(torch.sum(grad_U_p ** 2)) / net.total_no_param  # Norm of Gradient
     K = torch.sum(r ** 2) / 2
     Kp = torch.sum(rp ** 2) / 2
     alpha = -U_p - Kp + U + K
@@ -291,18 +279,19 @@ for t in range(T):
         U = U_p  # Potential Energy Update
 
         # print('Sample')
-        if t > 100:
+        if t > 500:
             fm = fm + f_p
-            #torch.cat((um_samples, up))
             um = um + up
             S = S + 1
+            u_test = net.forward(x_test)
+            plt.plot(x_test, u_test.data, 'b', alpha=0.08)
+            # torch.cat((um_samples, up))
     else:
         net.update_param(theta)
         # print('No Sample')
     print(t)
     print(S)
-    # cProfile.run('re.compile("foo|bar")')
-
+plt.show()
 # %%
 # Average over samples
 f_mean = fm / S
