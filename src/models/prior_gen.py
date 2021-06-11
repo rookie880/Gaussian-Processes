@@ -4,7 +4,6 @@ from torch import nn
 import matplotlib.pyplot as plt
 from torch.autograd import grad
 import gpytorch
-
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
 
@@ -37,9 +36,9 @@ class NN(nn.Module):
 
         # Hyper-parameters
         self.l = torch.sqrt(torch.tensor(0.1))
-        self.N = 100
+        self.N = 200
         self.sigma2 = 1
-        self.sigma2_n = 0.0001
+        self.sigma2_n = torch.tensor(0.0001)
         self.sigma_prior = 1
         self.total_no_param = 0
 
@@ -74,9 +73,9 @@ class NN(nn.Module):
         # temp = x - u # Bias toward M(x) = x = u
         temp = u_latent  # Bias toward M(x) = 0
 
-        ll_NN = torch.sum(temp ** 2) / self.sigma_prior
-        lp_NN = torch.sum(theta_param ** 2) / self.sigma_prior
-        return (ll_NN + lp_NN), u_latent
+        ll_nn = torch.sum(temp ** 2) / self.sigma_prior
+        lp_nn = torch.sum(theta_param ** 2) / self.sigma_prior
+        return (ll_nn + lp_nn), u_latent
 
     def update_param(self, theta_param):
         theta_dict = self.state_dict()
@@ -109,13 +108,15 @@ class NN(nn.Module):
 
 
 def se_kern(u_kern, l, sigma2, N):
-    # K = torch.zeros([N,N])
+    # out = torch.zeros([N,N])
     # l = 2*l*l
     # for i in range(N):
     #     for j in range(i,N):
-    #         temp = sigma2*torch.exp(-(x[i] - x[j])**2/l)
-    #         K[i,j] = temp
-    #         K[j,i] = temp
+    #         temp = sigma2*torch.exp(-(u_kern[i] - u_kern[j])**2/l)
+    #         out[i, j] = temp
+    #         out[j, i] = temp
+    K_module.lengthscale = l
+    K_module.outputscale = sigma2
     temp = K_module(u_kern)
     out = temp.evaluate()
     return out
@@ -126,7 +127,7 @@ def gp_prior(mod, u_prior):
     B = K_prior + mod.sigma2_n * torch.eye(mod.N)
     f_prior = torch.distributions.MultivariateNormal(torch.zeros(mod.N), B)
     f_prior = f_prior.sample()
-    omega = torch.normal(torch.zeros(mod.N), torch.ones(mod.N) * mod.sigma2_n)
+    omega = torch.normal(torch.zeros(mod.N), torch.ones(mod.N) * torch.sqrt(mod.sigma2_n))
     out = f_prior + omega
     out = torch.reshape(out, (mod.N, 1))
     return out
@@ -155,9 +156,9 @@ def gp_pred(mod, x_pred, y_pred):
     return f_pred, energy_gp
 
 
-def m_spline_func(t1, t2, k, x, N):
-    out = torch.zeros((N, 1), requires_grad=True)  # M(x) = u
-    for i in range(N):
+def m_spline_func(t1, t2, k, x, n):
+    out = torch.zeros((n, 1), requires_grad=True)  # M(x) = u
+    for i in range(n):
         if x[i] < t1:
             out[i] = k / (t1 - min(x)) * x[i] - k / (t1 - min(x)) * min(x)
         elif t1 <= x[i] < t2:
@@ -167,9 +168,9 @@ def m_spline_func(t1, t2, k, x, N):
     return out
 
 
-def m_square_func(threshold, x, N):
-    out = torch.zeros((N, 1))
-    for i in range(N):
+def m_square_func(threshold, x, n):
+    out = torch.zeros((n, 1))
+    for i in range(n):
         if x[i] < threshold:
             out[i] = 1
         else:
@@ -177,13 +178,13 @@ def m_square_func(threshold, x, N):
     return out
 
 
-def gaussian_mixture_2(m, sigma2, N):
-    x = torch.zeros((N, 1))
-    for i in range(N):
+def gaussian_mixture_2(mean_well, well_distance, n):
+    x = torch.zeros((n, 1))
+    for i in range(n):
         if torch.rand(1) < 0.5:
-            x[i] = torch.normal(m, torch.sqrt(torch.tensor(sigma2)))
+            x[i] = torch.normal(mean_well, torch.tensor(well_distance))
         else:
-            x[i] = torch.normal(-m, torch.sqrt(torch.tensor(sigma2)))
+            x[i] = torch.normal(-mean_well, torch.tensor(well_distance))
     return x
 
 
@@ -195,11 +196,9 @@ theta_prior = net.get_param()
 
 # Kernel Module #
 K_module = gpytorch.kernels.RBFKernel()
-K_module.lengthscale = net.l
-K_module.outputscale = net.sigma2
 
 # Generate Data and Plot #
-x_space = gaussian_mixture_2(4, 2.0, net.N)
+x_space = gaussian_mixture_2(4, 1.0, net.N)
 u = m_square_func(0, x_space, net.N)
 y = gp_prior(net, u)
 
