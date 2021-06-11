@@ -107,23 +107,14 @@ class NN(nn.Module):
         return out
 
 
-def se_kern(u_kern, l, sigma2, N):
-    # out = torch.zeros([N,N])
-    # l = 2*l*l
-    # for i in range(N):
-    #     for j in range(i,N):
-    #         temp = sigma2*torch.exp(-(u_kern[i] - u_kern[j])**2/l)
-    #         out[i, j] = temp
-    #         out[j, i] = temp
-    K_module.lengthscale = l
-    K_module.outputscale = sigma2
-    temp = K_module(u_kern)
-    out = temp.evaluate()
+def se_kern(u_kern, l, sigma2):
+    temp = u_kern.flatten()
+    out = sigma2*torch.exp(-(temp[None, :] - temp[:, None])**2/l)
     return out
 
 
 def gp_prior(mod, u_prior):
-    K_prior = se_kern(u_prior, mod.l, mod.sigma2, mod.N)
+    K_prior = se_kern(u_prior, mod.l, mod.sigma2)
     B = K_prior + mod.sigma2_n * torch.eye(mod.N)
     f_prior = torch.distributions.MultivariateNormal(torch.zeros(mod.N), B)
     f_prior = f_prior.sample()
@@ -135,25 +126,19 @@ def gp_prior(mod, u_prior):
 
 def gp_pred(mod, x_pred, y_pred):
     u_pred = mod.forward(x_pred)
-    K_pred = se_kern(u_pred, mod.l, mod.sigma2, mod.N)
-    # l = 2*mod.l*mod.l #K = mod.sigma2*torch.exp(-torch.cdist(u,u, p = 2)**2/l)
-
+    K_pred = se_kern(u_pred, mod.l, mod.sigma2)
     B = K_pred + mod.sigma2_n * torch.eye(mod.N)
-    L_pred = torch.cholesky(B)
-    alpha_pred = torch.cholesky_solve(y_pred, L_pred)
 
+    # Not Cholesky
+    alpha_pred, B_LU = torch.solve(y_pred, B)
     f_pred = K_pred @ alpha_pred
-
     ym = y_pred - f_pred
-    LL_GP = torch.sum(ym ** 2) / mod.sigma2_n
+    ll_gp = torch.sum(ym ** 2) / mod.sigma2_n
+    _, K_pred_det = torch.linalg.slogdet(K_pred + 1e-4*torch.eye(mod.N))
+    t1, K_LU = torch.solve(f_pred, K_pred + 1e-4*torch.eye(mod.N))
+    lp_gp = t1.t() @ f_pred + K_pred_det
 
-    # Prior
-    L_pred = torch.cholesky(K_pred + 1e-3 * torch.eye(mod.N))
-    t1 = torch.cholesky_solve(f_pred, L_pred)
-    LP_GP = t1.t() @ f_pred + torch.sum(torch.log(torch.diag(L_pred)))
-
-    energy_gp = LL_GP + LP_GP
-    return f_pred, energy_gp
+    return f_pred, lp_gp + ll_gp
 
 
 def m_spline_func(t1, t2, k, x, n):
@@ -168,13 +153,13 @@ def m_spline_func(t1, t2, k, x, n):
     return out
 
 
-def m_square_func(threshold, x, n):
+def square_func(threshold, x, amplitude, n):
     out = torch.zeros((n, 1))
     for i in range(n):
         if x[i] < threshold:
-            out[i] = 1
+            out[i] = amplitude
         else:
-            out[i] = 0
+            out[i] = -amplitude
     return out
 
 
@@ -199,12 +184,8 @@ K_module = gpytorch.kernels.RBFKernel()
 
 # Generate Data and Plot #
 x_space = gaussian_mixture_2(4, 1.0, net.N)
-u = m_square_func(0, x_space, net.N)
-y = gp_prior(net, u)
+y = square_func(0, x_space, 1, net.N)
 
-# Plot data #
-plt.scatter(x_space, u.data, 20, 'r')
-plt.show()
 # Observations
 plt.scatter(x_space, y, 20, 'b')
 plt.legend(['M(x)=u', 'y=GP(u)'])
@@ -298,11 +279,6 @@ u_mean = um / S
 
 # Plot
 # Latent space
-plt.scatter(x_space, u.data, 20, 'r', 'o')
-plt.legend(['M(x) = u'])
-plt.xlabel('x')
-plt.ylabel('u')
-plt.show()
 plt.scatter(x_space, u_mean.data, 20, 'r', '*')
 plt.legend(['Mhat(x) = uhat'])
 plt.xlabel('x')
