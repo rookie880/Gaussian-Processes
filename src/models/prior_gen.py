@@ -6,7 +6,6 @@ from torch.autograd import grad
 import gpytorch
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
-
 # %% Functions
 class NN(nn.Module):
     def __init__(self):
@@ -36,11 +35,13 @@ class NN(nn.Module):
 
         # Hyper-parameters
         self.l = torch.sqrt(torch.tensor(0.1))
-        self.N = 200
+        self.N = 2000
         self.sigma2 = 1
         self.sigma2_n = torch.tensor(0.0001)
         self.sigma_prior = 1
         self.total_no_param = 0
+
+        # Aux variables
 
     def forward(self, x):
         x = self.L1(x)
@@ -193,8 +194,8 @@ plt.show()
 
 # %%
 T = 10000
-S = 0  # Number of samples
-L = 5  # L = 3 ep = 0.0001 works (but it is to low for sure?.?)
+s = 0  # Number of samples
+L = 5  # Leapfrog steps
 ep0 = 0.01
 M = 3  # Number of cycles
 ep_space = ep0 * 0.5 * (torch.cos(
@@ -203,20 +204,19 @@ ep_space = ep0 * 0.5 * (torch.cos(
 plt.plot(ep_space)
 plt.show()
 
-fm = torch.zeros((net.N, 1))
-um = torch.zeros((net.N, 1))
-G = torch.zeros(T)
-
 # Init
 net.prior()
 theta = net.get_param()
-U_NN, ign = net.energy_nn(x_space, theta)
-f, U_GP = gp_pred(net, x_space, y)
-U = U_GP + U_NN
-um_samples = []
+U_nn, ign = net.energy_nn(x_space, theta)
+f, U_gp = gp_pred(net, x_space, y)
+U = U_gp + U_nn
 grad_U = net.grad_calc(U)
-x_test = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
 
+x_test = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
+u_test_m = 0*x_test
+fm = torch.zeros((net.N, 1))
+um = torch.zeros((net.N, 1))
+G = torch.zeros(T)
 
 # H-MCMC
 for t in range(T):
@@ -227,7 +227,6 @@ for t in range(T):
     U_p = U
 
     # Leapfrog
-    # ep = torch.rand(1)*0.01
     ep = ep_space[t]
     for i in range(L):
         rp = rp - ep * grad_U_p * 0.5
@@ -235,9 +234,9 @@ for t in range(T):
 
         # Calculate gradient of U_p
         net.update_param(theta_p)
-        U_NN_p, up = net.energy_nn(x_space, theta_p)  # NN pot. Energy
-        f_p, U_GP_p = gp_pred(net, x_space, y)  # GP Pot. Energy
-        U_p = U_GP_p + U_NN_p  # Proposed Pot. Energy
+        U_nn_p, up = net.energy_nn(x_space, theta_p)  # NN pot. Energy
+        f_p, U_gp_p = gp_pred(net, x_space, y)  # GP Pot. Energy
+        U_p = U_gp_p + U_nn_p  # Proposed Pot. Energy
         grad_U_p = net.grad_calc(U_p)
         rp = rp - ep * grad_U_p * 0.5
 
@@ -246,36 +245,30 @@ for t in range(T):
     Kp = torch.sum(rp ** 2) / 2
     alpha = -U_p - Kp + U + K
 
-    # print("Kp: ", Kp)
-    # print("K: ", K)
-    # print("Grad Norm: ", G[t] )
-    # print("Ep: ", ep)
-
     if torch.log(torch.rand(1)) < alpha:
         theta = theta_p
         net.update_param(theta)
-        U_NN = U_NN_p  # Neural Network potential energy update
-        U_GP = U_GP_p  # GP potential Energy update
+        U_nn = U_nn_p  # Neural Network potential energy update
+        U_gp = U_gp_p  # GP potential Energy update
         U = U_p  # Potential Energy Update
 
-        # print('Sample')
         if t > 500:
             fm = fm + f_p
             um = um + up
-            S = S + 1
+            s = s + 1
             u_test = net.forward(x_test)
+            u_test_m = u_test_m + u_test
             plt.plot(x_test, u_test.data, 'b', alpha=0.08)
-            # torch.cat((um_samples, up))
     else:
         net.update_param(theta)
-        # print('No Sample')
     print(t)
-    print(S)
+    print(s)
 plt.show()
 # %%
 # Average over samples
-f_mean = fm / S
-u_mean = um / S
+f_mean = fm / s
+u_mean = um / s
+u_test_mean = u_test_m / s
 
 # Plot
 # Latent space
@@ -284,6 +277,14 @@ plt.legend(['Mhat(x) = uhat'])
 plt.xlabel('x')
 plt.ylabel('u')
 plt.show()
+
+# Latent space predictions
+plt.scatter(x_test, u_test_mean.data, 20, 'r', '*')
+plt.legend(['Mhat(x) = uhat'])
+plt.xlabel('x')
+plt.ylabel('u')
+plt.show()
+
 
 # Targets
 plt.scatter(x_space, y)
