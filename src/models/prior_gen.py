@@ -109,8 +109,11 @@ class NN(nn.Module):
 
 
 def se_kern(u_kern, l, sigma2):
-    temp = u_kern.flatten()
-    out = sigma2*torch.exp(-(temp[None, :] - temp[:, None])**2/l)
+    #temp = u_kern.flatten()
+    #out = sigma2*torch.exp(-(temp[None, :] - temp[:, None])**2/l)
+    K_module.lengthscale = l*l
+    temp = K_module(u_kern)
+    out = temp.evaluate()
     return out
 
 
