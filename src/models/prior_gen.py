@@ -35,7 +35,7 @@ class NN(nn.Module):
 
         # Hyper-parameters
         self.l = torch.sqrt(torch.tensor(0.1))
-        self.N = 2000
+        self.N = 500
         self.sigma2 = 1
         self.sigma2_n = torch.tensor(0.0001)
         self.sigma_prior = 1
