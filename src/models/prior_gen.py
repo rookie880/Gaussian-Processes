@@ -6,6 +6,7 @@ from torch.autograd import grad
 import gpytorch
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
+
 # %% Functions
 class NN(nn.Module):
     def __init__(self):
@@ -35,7 +36,7 @@ class NN(nn.Module):
 
         # Hyper-parameters
         self.l = torch.sqrt(torch.tensor(0.1))
-        self.N = 500
+        self.N = 200
         self.sigma2 = 1
         self.sigma2_n = torch.tensor(0.0001)
         self.sigma_prior = 1
@@ -109,6 +110,7 @@ class NN(nn.Module):
 
 
 def se_kern(u_kern, l, sigma2):
+    l = l*l
     temp = u_kern.flatten()
     out = sigma2*torch.exp(-(temp[None, :] - temp[:, None])**2/l)
     return out
@@ -174,7 +176,50 @@ def gaussian_mixture_2(mean_well, well_distance, n):
     return x
 
 
-# %%
+def length_transformation(model, x):
+    x, _ = torch.sort(x)
+    u = model.forward(x)
+    x_dist = (x[None, :] - x[:, None])**2
+    u_dist = (u[None, :] - u[:, None])**2
+    l_matrix = (model.l**2)*torch.div(x_dist, u_dist)
+    l_matrix = torch.nan_to_num(l_matrix, nan=1e16)
+
+    # Plot log(l_matrix) and (x,u)
+    fig, ax1 = plt.subplots()
+    ax2 = ax1.twinx()
+    ax2.plot(x, u.data, 'r')
+    extent = -5, 5, -5, 5
+    ax1.imshow(torch.log(l_matrix.data), extent=extent)
+    ax1.set_xlabel('x')
+    ax1.set_ylabel('x´')
+    ax2.set_ylabel('u', color='r')
+    plt.title('Image plot of l(x,x´) together with (x,M(x)=u)')
+    plt.savefig('./Figures/M_intuition/l_matrix_xu.pdf')
+    plt.show()
+    k_u = se_kern(u, model.l, model.sigma2)
+    plt.matshow(k_u.data)
+    plt.title('Kernel in u-space')
+    plt.colorbar()
+    plt.savefig('./Figures/M_intuition/kernel_u.pdf')
+    plt.show()
+    plt.plot(x, u.data, 'r')
+    plt.title('M transformation')
+    plt.xlabel('x')
+    plt.ylabel('M(x) = u')
+    plt.grid()
+    plt.savefig('./Figures/M_intuition/M_transformation_example.pdf')
+    plt.show()
+
+    exponent = torch.div(x_dist, l_matrix)
+    out = model.sigma2*torch.exp(-exponent)
+    plt.matshow(out.data)
+    plt.colorbar()
+    plt.title('Kernel in x-space using l(x,x´)')
+    plt.savefig('./Figures/M_intuition/kernel_l_xx.pdf')
+    plt.show()
+length_transformation(net, x_space)
+
+# %% Generate Data
 net = NN()
 net.get_total_no_param()
 net.prior()
@@ -184,7 +229,8 @@ theta_prior = net.get_param()
 K_module = gpytorch.kernels.RBFKernel()
 
 # Generate Data and Plot #
-x_space = gaussian_mixture_2(4, 1.0, net.N)
+x_space = torch.reshape(torch.linspace(-5, 5, net.N), (net.N, 1))
+
 y = square_func(0, x_space, 1, net.N)
 
 # Observations
@@ -192,7 +238,7 @@ plt.scatter(x_space, y, 20, 'b')
 plt.legend(['M(x)=u', 'y=GP(u)'])
 plt.show()
 
-# %%
+# %% Sampling
 T = 10000
 s = 0  # Number of samples
 L = 5  # Leapfrog steps
@@ -264,7 +310,7 @@ for t in range(T):
     print(t)
     print(s)
 plt.show()
-# %%
+# %% Show results
 # Average over samples
 f_mean = fm / s
 u_mean = um / s
