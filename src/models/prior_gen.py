@@ -239,9 +239,6 @@ plt.savefig('y.pdf')
 plt.show()
 
 # %% Sampling
-seed = 8
-torch.manual_seed(seed)
-random.seed(seed)
 
 T = 5000
 s = 0  # Number of samples
