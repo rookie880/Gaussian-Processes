@@ -14,9 +14,9 @@ class NN(nn.Module):
     def __init__(self):
         super().__init__()
         self.L1_fi = 1
-        self.L1_fo = 4
+        self.L1_fo = 32
         self.L2_fi = self.L1_fo
-        self.L2_fo = 4
+        self.L2_fo = 32
         self.L3_fi = self.L2_fo
         self.L3_fo = 1
         # self.l4_fi = self.L3_fo; self.l4_fo = 1
@@ -38,7 +38,7 @@ class NN(nn.Module):
 
         # Hyper-parameters
         self.l = torch.sqrt(torch.tensor(0.1))
-        self.N = 200
+        self.N = 100
         self.sigma2_f = 1
         self.sigma2_n = torch.tensor(0.0005)
         self.sigma_prior = 1
@@ -131,29 +131,35 @@ def gp_prior(mod, u_prior):
     return out
 
 
-def gp_pred(mod, x_pred, y_pred):
+def gp(mod, x_pred, y_pred, alt_flag):
     u_pred = mod.forward(x_pred)
     K_pred = se_kern(u_pred, mod.l, mod.sigma2_f)
     B = K_pred + mod.sigma2_n * torch.eye(mod.N)
 
-    # Not Cholesky
-    #alpha_pred, B_LU = torch.solve(y_pred, B)
-    #f_pred = K_pred @ alpha_pred
-    #ym = y_pred - f_pred
-    #ll_gp = torch.sum(ym ** 2) / mod.sigma2_n
-    #_, K_pred_det = torch.linalg.slogdet(K_pred + 1e-4*torch.eye(mod.N))
-    #t1, K_LU = torch.solve(f_pred, K_pred + 1e-4*torch.eye(mod.N))
-    #lp_gp = t1.t() @ f_pred + K_pred_det
+    # Not Cholesky. avoiding K^{-1}
+    if not alt_flag:
+        alpha_pred, B_LU = torch.solve(y_pred, B)
+        f_pred = K_pred @ alpha_pred
+        ym = y_pred - f_pred
+        ll_gp = torch.sum(ym ** 2) / mod.sigma2_n
+        _, K_pred_det = torch.linalg.slogdet(K_pred + 1e-4*torch.eye(mod.N))
+        lp_gp = f_pred.t() @ alpha_pred + K_pred_det
+        out = lp_gp + ll_gp
+    else:
+        alpha_pred, B_LU = torch.solve(y_pred, B)
+        _, B_pred_det = torch.linalg.slogdet(B)
+        out = y.t() @ alpha_pred + B_pred_det
+        f_pred = K_pred @ alpha_pred
 
-    # Not Cholesky avoiding K^{-1}
+    return f_pred, out
+
+
+def gp_uspace(mod, u_pred, y_pred):
+    K_pred = se_kern(u_pred, mod.l, mod.sigma2_f)
+    B = K_pred + mod.sigma2_n * torch.eye(mod.N)
     alpha_pred, B_LU = torch.solve(y_pred, B)
-    f_pred = K_pred @ alpha_pred
-    ym = y_pred - f_pred
-    ll_gp = torch.sum(ym ** 2) / mod.sigma2_n
-    _, K_pred_det = torch.linalg.slogdet(K_pred + 1e-4*torch.eye(mod.N))
-    lp_gp = f_pred.t() @ alpha_pred + K_pred_det
-
-    return f_pred, lp_gp + ll_gp
+    yhat = K_pred @ alpha_pred
+    return yhat
 
 
 def m_spline_func(t1, t2, k, x, n):
@@ -189,10 +195,26 @@ def gaussian_mixture_2(mean_well, well_distance, n):
     return x
 
 
+def ep_generate(T, M, ep0, ep_max, ep_min, gamma, t_burn, ep_type):
+    ep_space = torch.zeros(T)
+    poly = False
+    cyclic = False
+    if ep_type == "Cyclic":
+        cyclic = True
+        t_burn = torch.ceil(torch.tensor(T) / torch.tensor(M))
+        ep_space = ep0 * 0.5 * (torch.cos(
+            torch.pi * torch.fmod(torch.linspace(0, T, T), t_burn) / t_burn) + 1)
+    elif ep_type == "Poly":
+        poly = True
+        for t in range(T):
+            k = (ep_min/ep_max)**(1/gamma)
+            b = k*T/(1-k)
+            a = ep_max*b**gamma
+            ep_space[t] = a*(b+t)**(-gamma)
+    return ep_space, t_burn, poly, cyclic
+
+
 # %% Generate Data
-seed = 8
-torch.manual_seed(seed)
-random.seed(seed)
 net = NN()
 net.get_total_no_param()
 net.prior()
@@ -201,8 +223,10 @@ theta_prior = net.get_param()
 # Kernel Module #
 K_module = gpytorch.kernels.RBFKernel()
 
-# Generate Data and Plot #
-x_space = gaussian_mixture_2(4.5, 1, net.N)
+# Generate Data and Plot
+x_space = torch.cat((torch.linspace(-5, -0.5, 50), torch.linspace(0.5, 5, 50)))
+#x_space = torch.linspace(-5, 5, net.N)
+x_space = torch.reshape(x_space, (net.N, 1))
 y = square_func(0, x_space, 1, net.N, net.sigma2_n)
 
 # Observations
@@ -215,32 +239,31 @@ plt.savefig('y.pdf')
 plt.show()
 
 # %% Sampling
-T = 5000
+T = 4000
 s = 0  # Number of samples
 e = 0  # Number of exploration stages
 L = 5  # Leapfrog steps # L = 10, ep0 = 0.005 appear to work ok
-ep0 = 0.001
-M = 5  # Number of cycles
+alt_flag = True  # if true then turn on alternative posterior. using the marginal likelihood p(y|u)
+M = 2  # Number of cycles
 beta = 0.1  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
-t_burn = torch.ceil(torch.tensor(T) / torch.tensor(M))
-ep_space = ep0 * 0.5 * (torch.cos(
-    torch.pi * torch.fmod(torch.linspace(0, T, T), t_burn) / t_burn) + 1)
+
+ep_space, t_burn, poly, cyclic = ep_generate(T, M, ep0=0.0003, ep_max=0.1, ep_min=0.000002,
+                                             gamma=0.99, t_burn=500, ep_type="Poly")
 
 # Init
 net.prior()
 theta = net.get_param()
 U_nn, ign = net.energy_nn(x_space, theta)
-f, U_gp = gp_pred(net, x_space, y)
+f, U_gp = gp(net, x_space, y, alt_flag)
 U = U_gp + U_nn
 grad_U = net.grad_calc(U)
 
-x_test = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
-u_test_m = 0*x_test
+x_interpolate = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
+u_interpolate_cum = 0*x_interpolate
 f_cum = torch.zeros((net.N, 1))
 u_cum = torch.zeros((net.N, 1))
 G = torch.zeros(T)
 
-torch.random.set_rng_state(torch.random.get_rng_state())
 for t in range(T):
     rp = torch.normal(torch.zeros(net.total_no_param), torch.ones(net.total_no_param))
     r = rp
@@ -257,14 +280,14 @@ for t in range(T):
         # Calculate gradient of U_p
         net.update_param(theta_p)
         U_nn_p, up = net.energy_nn(x_space, theta_p)  # NN pot. Energy
-        fp, U_gp_p = gp_pred(net, x_space, y)  # GP Pot. Energy
+        fp, U_gp_p = gp(net, x_space, y, alt_flag)  # GP Pot. Energy
         U_p = U_gp_p + U_nn_p  # Proposed Pot. Energy
         grad_U_p = net.grad_calc(U_p)
         rp = rp - ep * grad_U_p * 0.5
 
     G[t] = torch.sqrt(torch.sum(grad_U_p ** 2)) / net.total_no_param  # Norm of Gradient
 
-    if torch.fmod(torch.tensor(t-1), t_burn)/t_burn < beta:
+    if (torch.fmod(torch.tensor(t-1), t_burn)/t_burn < beta and cyclic) or (t < t_burn and poly):
         #  Do exploration
         e += 1
         theta = theta_p
@@ -287,9 +310,9 @@ for t in range(T):
             f_cum = f_cum + fp
             u_cum = u_cum + up
             s = s + 1
-            u_test = net.forward(x_test)
-            u_test_m = u_test_m + u_test
-            plt.plot(x_test, u_test.data, 'b', alpha=0.02)
+            u_test = net.forward(x_interpolate)
+            u_interpolate_cum = u_interpolate_cum + u_test
+            plt.plot(x_interpolate, u_test.data, 'b', alpha=0.02)
         else:
             net.update_param(theta)
     print(t, ' : ', s, ' : ', e)
@@ -310,7 +333,7 @@ plt.ylabel('u')
 plt.show()
 
 # Plot Latent space predictions
-plt.scatter(x_test, uhat_interpolate.data, 20, 'r', '*')
+plt.scatter(x_interpolate, uhat_interpolate.data, 20, 'r', '*')
 plt.legend(['Mhat(x) = uhat'])
 plt.xlabel('x')
 plt.ylabel('u')
