@@ -1,0 +1,6 @@
+plt.scatter(torch.linspace(0, T-1, T-2), ep_space[0:(T-2)], 10, 'b')
+plt.ylabel('epsilon')
+plt.xlabel('iteration')
+plt.grid()
+plt.savefig('./Figures/step_trajectory_05_5_10000.pdf')
+plt.show()

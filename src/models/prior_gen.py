@@ -1,10 +1,13 @@
 # %% Libraries
+import random
+
 import torch
 from torch import nn
 import matplotlib.pyplot as plt
 from torch.autograd import grad
 import gpytorch
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
+
 
 # %% Functions
 class NN(nn.Module):
@@ -35,9 +38,9 @@ class NN(nn.Module):
 
         # Hyper-parameters
         self.l = torch.sqrt(torch.tensor(0.1))
-        self.N = 500
-        self.sigma2 = 1
-        self.sigma2_n = torch.tensor(0.0001)
+        self.N = 200
+        self.sigma2_f = 1
+        self.sigma2_n = torch.tensor(0.0005)
         self.sigma_prior = 1
         self.total_no_param = 0
 
@@ -71,7 +74,7 @@ class NN(nn.Module):
 
     def energy_nn(self, x, theta_param):
         u_latent = self.forward(x)
-        # temp = x - u # Bias toward M(x) = x = u
+        # temp = x - u # Bias toward M(x) = x = u, will only work for n = m
         temp = u_latent  # Bias toward M(x) = 0
 
         ll_nn = torch.sum(temp ** 2) / self.sigma_prior
@@ -108,39 +111,47 @@ class NN(nn.Module):
         return out
 
 
-def se_kern(u_kern, l, sigma2):
+def se_kern(u_kern, lengthscale, sigma2_f):
     #temp = u_kern.flatten()
-    #out = sigma2*torch.exp(-(temp[None, :] - temp[:, None])**2/l)
-    K_module.lengthscale = l*l
+    #out = sigma2_f*torch.exp(-(temp[None, :] - temp[:, None])**2/l)
+    K_module.lengthscale = lengthscale*lengthscale
     temp = K_module(u_kern)
-    out = temp.evaluate()
+    out = sigma2_f*temp.evaluate()
     return out
 
 
 def gp_prior(mod, u_prior):
-    K_prior = se_kern(u_prior, mod.l, mod.sigma2)
+    K_prior = se_kern(u_prior, mod.l, mod.sigma2_f)
     B = K_prior + mod.sigma2_n * torch.eye(mod.N)
     f_prior = torch.distributions.MultivariateNormal(torch.zeros(mod.N), B)
     f_prior = f_prior.sample()
-    omega = torch.normal(torch.zeros(mod.N), torch.ones(mod.N) * torch.sqrt(mod.sigma2_n))
-    out = f_prior + omega
+    eta = torch.normal(torch.zeros(mod.N), torch.ones(mod.N) * torch.sqrt(mod.sigma2_n))
+    out = f_prior + eta
     out = torch.reshape(out, (mod.N, 1))
     return out
 
 
 def gp_pred(mod, x_pred, y_pred):
     u_pred = mod.forward(x_pred)
-    K_pred = se_kern(u_pred, mod.l, mod.sigma2)
+    K_pred = se_kern(u_pred, mod.l, mod.sigma2_f)
     B = K_pred + mod.sigma2_n * torch.eye(mod.N)
 
     # Not Cholesky
+    #alpha_pred, B_LU = torch.solve(y_pred, B)
+    #f_pred = K_pred @ alpha_pred
+    #ym = y_pred - f_pred
+    #ll_gp = torch.sum(ym ** 2) / mod.sigma2_n
+    #_, K_pred_det = torch.linalg.slogdet(K_pred + 1e-4*torch.eye(mod.N))
+    #t1, K_LU = torch.solve(f_pred, K_pred + 1e-4*torch.eye(mod.N))
+    #lp_gp = t1.t() @ f_pred + K_pred_det
+
+    # Not Cholesky avoiding K^{-1}
     alpha_pred, B_LU = torch.solve(y_pred, B)
     f_pred = K_pred @ alpha_pred
     ym = y_pred - f_pred
     ll_gp = torch.sum(ym ** 2) / mod.sigma2_n
     _, K_pred_det = torch.linalg.slogdet(K_pred + 1e-4*torch.eye(mod.N))
-    t1, K_LU = torch.solve(f_pred, K_pred + 1e-4*torch.eye(mod.N))
-    lp_gp = t1.t() @ f_pred + K_pred_det
+    lp_gp = f_pred.t() @ alpha_pred + K_pred_det
 
     return f_pred, lp_gp + ll_gp
 
@@ -157,27 +168,31 @@ def m_spline_func(t1, t2, k, x, n):
     return out
 
 
-def square_func(threshold, x, amplitude, n):
+def square_func(threshold, x, amplitude, n, sigma2_n):
     out = torch.zeros((n, 1))
     for i in range(n):
         if x[i] < threshold:
             out[i] = amplitude
         else:
             out[i] = -amplitude
-    return out
+    eta = torch.normal(torch.zeros(n, 1), torch.ones(n, 1)*torch.sqrt(sigma2_n))
+    return out+eta
 
 
 def gaussian_mixture_2(mean_well, well_distance, n):
     x = torch.zeros((n, 1))
     for i in range(n):
         if torch.rand(1) < 0.5:
-            x[i] = torch.normal(mean_well, torch.tensor(well_distance))
+            x[i] = torch.normal(torch.tensor(mean_well), torch.tensor(well_distance))
         else:
-            x[i] = torch.normal(-mean_well, torch.tensor(well_distance))
+            x[i] = torch.normal(-torch.tensor(mean_well), torch.tensor(well_distance))
     return x
 
 
-# %%
+# %% Generate Data
+seed = 8
+torch.manual_seed(seed)
+random.seed(seed)
 net = NN()
 net.get_total_no_param()
 net.prior()
@@ -187,25 +202,29 @@ theta_prior = net.get_param()
 K_module = gpytorch.kernels.RBFKernel()
 
 # Generate Data and Plot #
-x_space = gaussian_mixture_2(4, 1.0, net.N)
-y = square_func(0, x_space, 1, net.N)
+x_space = gaussian_mixture_2(4.5, 1, net.N)
+y = square_func(0, x_space, 1, net.N, net.sigma2_n)
 
 # Observations
-plt.scatter(x_space, y, 20, 'b')
-plt.legend(['M(x)=u', 'y=GP(u)'])
+plt.scatter(x_space, y, 20, 'g')
+plt.ylabel('y')
+plt.xlabel('x')
+plt.legend(['y(x)'])
+plt.grid()
+plt.savefig('y.pdf')
 plt.show()
 
-# %%
-T = 10000
+# %% Sampling
+T = 5000
 s = 0  # Number of samples
-L = 5  # Leapfrog steps
-ep0 = 0.01
-M = 3  # Number of cycles
+e = 0  # Number of exploration stages
+L = 5  # Leapfrog steps # L = 10, ep0 = 0.005 appear to work ok
+ep0 = 0.001
+M = 5  # Number of cycles
+beta = 0.1  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
+t_burn = torch.ceil(torch.tensor(T) / torch.tensor(M))
 ep_space = ep0 * 0.5 * (torch.cos(
-    torch.pi * torch.fmod(torch.linspace(0, T, T), torch.ceil(torch.tensor(T) / torch.tensor(M))) / torch.ceil(
-        torch.tensor(T) / torch.tensor(M))) + 1)
-plt.plot(ep_space)
-plt.show()
+    torch.pi * torch.fmod(torch.linspace(0, T, T), t_burn) / t_burn) + 1)
 
 # Init
 net.prior()
@@ -217,11 +236,11 @@ grad_U = net.grad_calc(U)
 
 x_test = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
 u_test_m = 0*x_test
-fm = torch.zeros((net.N, 1))
-um = torch.zeros((net.N, 1))
+f_cum = torch.zeros((net.N, 1))
+u_cum = torch.zeros((net.N, 1))
 G = torch.zeros(T)
 
-# H-MCMC
+torch.random.set_rng_state(torch.random.get_rng_state())
 for t in range(T):
     rp = torch.normal(torch.zeros(net.total_no_param), torch.ones(net.total_no_param))
     r = rp
@@ -238,61 +257,70 @@ for t in range(T):
         # Calculate gradient of U_p
         net.update_param(theta_p)
         U_nn_p, up = net.energy_nn(x_space, theta_p)  # NN pot. Energy
-        f_p, U_gp_p = gp_pred(net, x_space, y)  # GP Pot. Energy
+        fp, U_gp_p = gp_pred(net, x_space, y)  # GP Pot. Energy
         U_p = U_gp_p + U_nn_p  # Proposed Pot. Energy
         grad_U_p = net.grad_calc(U_p)
         rp = rp - ep * grad_U_p * 0.5
 
     G[t] = torch.sqrt(torch.sum(grad_U_p ** 2)) / net.total_no_param  # Norm of Gradient
-    K = torch.sum(r ** 2) / 2
-    Kp = torch.sum(rp ** 2) / 2
-    alpha = -U_p - Kp + U + K
 
-    if torch.log(torch.rand(1)) < alpha:
+    if torch.fmod(torch.tensor(t-1), t_burn)/t_burn < beta:
+        #  Do exploration
+        e += 1
         theta = theta_p
         net.update_param(theta)
         U_nn = U_nn_p  # Neural Network potential energy update
         U_gp = U_gp_p  # GP potential Energy update
         U = U_p  # Potential Energy Update
+    else:
+        #  Do sampling
+        K = torch.sum(r ** 2) / 2
+        Kp = torch.sum(rp ** 2) / 2
+        alpha = -U_p - Kp + U + K
+        if torch.log(torch.rand(1)) < alpha:
+            theta = theta_p
+            net.update_param(theta)
+            U_nn = U_nn_p  # Neural Network potential energy update
+            U_gp = U_gp_p  # GP potential Energy update
+            U = U_p  # Potential Energy Update
 
-        if t > 500:
-            fm = fm + f_p
-            um = um + up
+            f_cum = f_cum + fp
+            u_cum = u_cum + up
             s = s + 1
             u_test = net.forward(x_test)
             u_test_m = u_test_m + u_test
-            plt.plot(x_test, u_test.data, 'b', alpha=0.08)
-    else:
-        net.update_param(theta)
-    print(t)
-    print(s)
+            plt.plot(x_test, u_test.data, 'b', alpha=0.02)
+        else:
+            net.update_param(theta)
+    print(t, ' : ', s, ' : ', e)
 plt.show()
-# %%
+# %% Show results
+
 # Average over samples
-f_mean = fm / s
-u_mean = um / s
-u_test_mean = u_test_m / s
+yhat = f_cum / s
+uhat = u_cum / s
+uhat_interpolate = u_interpolate_cum / s
 
-# Plot
-# Latent space
-plt.scatter(x_space, u_mean.data, 20, 'r', '*')
+
+# Plot Latent space
+plt.scatter(x_space, uhat.data, 20, 'r', '*')
 plt.legend(['Mhat(x) = uhat'])
 plt.xlabel('x')
 plt.ylabel('u')
 plt.show()
 
-# Latent space predictions
-plt.scatter(x_test, u_test_mean.data, 20, 'r', '*')
+# Plot Latent space predictions
+plt.scatter(x_test, uhat_interpolate.data, 20, 'r', '*')
 plt.legend(['Mhat(x) = uhat'])
 plt.xlabel('x')
 plt.ylabel('u')
 plt.show()
 
 
-# Targets
+# Plot Targets and filtered values yhat
 plt.scatter(x_space, y)
-plt.scatter(x_space, f_mean.data)
-plt.legend(['y', 'GP(u) = ybar', 'GP(uhat) = yhat'])
+plt.scatter(x_space, yhat.data)
+plt.legend(['y', 'GP(uhat) = yhat'])
 
 plt.xlabel('u')
 plt.ylabel('y')
@@ -301,19 +329,5 @@ plt.show()
 plt.plot(G)
 plt.show()
 
-'''
-L = 5, ep1 = 0.0007, ep2 = 0.0005
-OrderedDict([('L1.weight',
-              tensor([[ 0.6725],
-                      [-0.1466],
-                      [-0.5422]])),
-             ('L1.bias', tensor([ 0.4974, -1.1743, -0.6064])),
-             ('L2.weight',
-              tensor([[ 0.5291, -1.2355,  0.5454],
-                      [-0.8836, -0.2579,  0.7238],
-                      [-0.4228,  1.1979, -0.0870]])),
-             ('L2.bias', tensor([-0.7052, -0.7126,  0.2960])),
-             ('L3.weight', tensor([[-0.2347,  1.3749,  0.6065]])),
-             ('L3.bias', tensor([0.8096]))])
-'''
+
 # %%
