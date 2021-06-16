@@ -14,9 +14,9 @@ class NN(nn.Module):
     def __init__(self):
         super().__init__()
         self.L1_fi = 1
-        self.L1_fo = 32
+        self.L1_fo = 4
         self.L2_fi = self.L1_fo
-        self.L2_fo = 32
+        self.L2_fo = 4
         self.L3_fi = self.L2_fo
         self.L3_fo = 1
         # self.l4_fi = self.L3_fo; self.l4_fo = 1
@@ -224,7 +224,7 @@ theta_prior = net.get_param()
 K_module = gpytorch.kernels.RBFKernel()
 
 # Generate Data and Plot
-x_space = torch.cat((torch.linspace(-5, -0.5, 50), torch.linspace(0.5, 5, 50)))
+x_space = torch.cat((torch.linspace(-5, -1, 50), torch.linspace(1, 5, 50)))
 #x_space = torch.linspace(-5, 5, net.N)
 x_space = torch.reshape(x_space, (net.N, 1))
 y = square_func(0, x_space, 1, net.N, net.sigma2_n)
@@ -239,15 +239,19 @@ plt.savefig('y.pdf')
 plt.show()
 
 # %% Sampling
-T = 4000
+seed = 8
+torch.manual_seed(seed)
+random.seed(seed)
+
+T = 5000
 s = 0  # Number of samples
 e = 0  # Number of exploration stages
 L = 5  # Leapfrog steps # L = 10, ep0 = 0.005 appear to work ok
 alt_flag = True  # if true then turn on alternative posterior. using the marginal likelihood p(y|u)
-M = 2  # Number of cycles
+M = 5  # Number of cycles
 beta = 0.1  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
 
-ep_space, t_burn, poly, cyclic = ep_generate(T, M, ep0=0.0003, ep_max=0.1, ep_min=0.000002,
+ep_space, t_burn, poly, cyclic = ep_generate(T, M, ep0=0.001, ep_max=0.1, ep_min=0.000002,
                                              gamma=0.99, t_burn=500, ep_type="Poly")
 
 # Init
