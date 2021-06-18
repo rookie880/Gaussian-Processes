@@ -51,6 +51,7 @@ def gp_uspace(mod, u_pred, y_pred):
     yhat = K_pred @ alpha_pred
     return yhat
 
+
 def NLML(u_pred, y_pred, N, l, sigma2_f, sigma2_n): # Calculate negative log markinal likelihood
     K_pred = se_kern(u_pred, l, sigma2_f)
     B = K_pred + sigma2_n * torch.eye(N)

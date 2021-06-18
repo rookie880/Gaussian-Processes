@@ -3,6 +3,7 @@ import random
 
 import torch
 from torch import nn
+import gp_nn
 import matplotlib.pyplot as plt
 from torch.autograd import grad
 import gpytorch
@@ -39,11 +40,12 @@ class BNN(nn.Module):
         # self.L4 = nn.Linear(self.l4_fi, self.l4_fo)
 
         # Hyper-parameters
-        self.l = torch.sqrt(torch.tensor(0.5))
+        self.l = torch.sqrt(torch.tensor(2.0))
         self.N = 200
         self.sigma2_f = 1
         self.sigma2_n = torch.tensor(0.0005)
-        self.sigma_prior = 1
+        self.sigma2_prior = 0.1
+        self.sigma2_likelihood = 0.5
         self.total_no_param = 0
 
         # Aux variables
@@ -60,7 +62,7 @@ class BNN(nn.Module):
 
     def prior(self):
         theta_sample = torch.normal(torch.zeros(self.total_no_param),
-                                    torch.ones(self.total_no_param) * self.sigma_prior)
+                                    torch.ones(self.total_no_param) * self.sigma2_prior)
         self.update_param(theta_sample)
         return
 
@@ -79,8 +81,8 @@ class BNN(nn.Module):
         # temp = x - u # Bias toward M(x) = x = u, will only work for n = m
         temp = u_latent  # Bias toward M(x) = 0
 
-        ll_nn = torch.sum(temp ** 2) / self.sigma_prior
-        lp_nn = torch.sum(theta_param ** 2) / self.sigma_prior
+        ll_nn = torch.sum(temp ** 2) / self.sigma2_likelihood
+        lp_nn = torch.sum(theta_param ** 2) / self.sigma2_prior
         return (ll_nn + lp_nn), u_latent
 
     def update_param(self, theta_param):
@@ -122,16 +124,14 @@ bnn.prior()
 K_module = gpytorch.kernels.RBFKernel()
 
 # %% Generate Data
-# Generate Data and Plot
-#x_space = torch.cat((torch.linspace(-5, -1, 50), torch.linspace(1, 5, 50)))
-#x_space = torch.linspace(-5, 5, bnn.N)
-#x_space = torch.reshape(x_space, (bnn.N, 1))
-#y = square_func(0, x_space, 1, bnn.N, bnn.sigma2_n)
-y, x_space = fg.wall_pulse_func(1, 1, bnn.N, bnn.sigma2_n)
-#x_space = torch.linspace(-5, 5, bnn.N)
-#x_space = torch.reshape(x_space, (bnn.N,1))
 
-# Observations
+# Generate Data
+#y, x_space = fg.wall_pulse_func(1, 1, bnn.N, bnn.sigma2_n)
+x_space = torch.cat((torch.linspace(0, 4.75, 100), torch.linspace(5.25, 10, 100)))
+x_space = torch.reshape(x_space, (bnn.N, 1))
+y = fg.square_func(threshold=5, x=x_space, amplitude=1, n=bnn.N, sigma2_n=bnn.sigma2_n)
+
+
 
 # Plot observations
 plt.plot(x_space, y)
@@ -143,30 +143,38 @@ plt.savefig('y.pdf')
 plt.show()
 
 # %% Sampling init
-T = 10000
+T = 5000
 s = 0  # Number of samples
 e = 0  # Number of exploration stages
 L = 10  # Leapfrog steps # L = 10, ep0 = 0.005 appear to work ok
 alt_flag = False  # if true then turn on alternative posterior. using the marginal likelihood p(y|u)
-M = 3  # Number of cycles
+M = 5  # Number of cycles
 beta = 0.2  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
 
-ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.002, ep_max=0.01, ep_min=0.000002,
+ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.0005, ep_max=0.01, ep_min=0.000002,
                                                 gamma=0.99, t_burn=500, ep_type="Cyclic")
 
-# HMCMC
-bnn.prior()
-theta = bnn.get_param()
-U_nn, ign = bnn.energy_nn(x_space, theta)
-f, U_gp = gp.gp(bnn, x_space, y, alt_flag)
-U = U_gp + U_nn
-grad_U = bnn.grad_calc(U)
-
+# Array init
 x_interpolate = torch.reshape(torch.linspace(0, 10, 200), (200, 1))
 u_interpolate_cum = 0*x_interpolate
 f_cum = torch.zeros((bnn.N, 1))
 u_cum = torch.zeros((bnn.N, 1))
 G = torch.zeros(T)
+theta_norm = torch.zeros(T+1)
+
+# HMCMC
+net = gp_nn.NN()
+net.train_nn(x_space=x_space, y=y, EPOCHS=2000, BATCH_SIZE=50)
+plt.plot(x_space, net.forward(x_space).data)
+plt.grid()
+plt.title('Init latent space')
+plt.show()
+theta = net.get_param()
+theta_norm[0] = torch.sum(theta**2)
+U_nn, ign = bnn.energy_nn(x_space, theta)
+f, U_gp = gp.gp(bnn, x_space, y, alt_flag)
+U = U_gp + U_nn
+grad_U = bnn.grad_calc(U)
 
 for t in range(T):
     rp = torch.normal(torch.zeros(bnn.total_no_param), torch.ones(bnn.total_no_param))
@@ -190,7 +198,7 @@ for t in range(T):
         rp = rp - ep * grad_U_p * 0.5
 
     G[t] = torch.sqrt(torch.sum(grad_U_p ** 2)) / bnn.total_no_param  # Norm of Gradient
-
+    theta_norm[t+1] = torch.sum(theta_p ** 2)
     if (torch.fmod(torch.tensor(t-1), t_burn)/t_burn < beta and cyclic) or (t < t_burn and poly):
         #  Do exploration
         e += 1
@@ -229,6 +237,7 @@ uhat_interpolate = u_interpolate_cum / s
 
 # Plot Latent space
 plt.plot(x_space, uhat.data)
+plt.grid()
 plt.legend(['Mhat(x) = uhat'])
 plt.xlabel('x')
 plt.ylabel('u')
@@ -236,6 +245,7 @@ plt.show()
 
 # Plot Latent space predictions
 plt.plot(x_interpolate, uhat_interpolate.data)
+plt.grid()
 plt.legend(['Mhat(x_interpolate) = uhat_interpolate'])
 plt.xlabel('x')
 plt.ylabel('u')
@@ -245,6 +255,7 @@ plt.show()
 # Plot Targets and filtered values yhat
 plt.scatter(x_space, y)
 plt.scatter(x_space, yhat.data)
+plt.grid()
 plt.legend(['y', 'GP(uhat) = yhat'])
 
 plt.xlabel('u')
