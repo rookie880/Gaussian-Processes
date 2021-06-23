@@ -37,6 +37,8 @@ class GP_vanilla(nn.Module):
         return loss
 
 
+
+
 m = GP_vanilla()
 # Instantiate optimizer
 opt = torch.optim.Adam(m.parameters(), lr=0.001)

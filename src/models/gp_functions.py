@@ -52,10 +52,18 @@ def gp_uspace(mod, u_pred, y_pred):
     return yhat
 
 
-def NLML(u_pred, y_pred, N, l, sigma2_f, sigma2_n): # Calculate negative log markinal likelihood
+def NLML(u_pred, y_pred, N, l, sigma2_f, sigma2_n):  # Calculate negative log marginal likelihood (NLML)
     K_pred = se_kern(u_pred, l, sigma2_f)
     B = K_pred + sigma2_n * torch.eye(N)
     alpha_pred, B_LU = torch.solve(y_pred, B)
     _, B_pred_det = torch.linalg.slogdet(B)
     nlml = y_pred.t() @ alpha_pred + B_pred_det
     return nlml
+
+
+def gp_pred(xobs, xstar, lengthscale, sigma2_f):
+    Kobs = se_kern(xobs, lengthscale, sigma2_f)
+    K_module.lengthscale = lengthscale*lengthscale
+    temp = K_module(xstar, xobs)
+    out = sigma2_f*temp.evaluate()
+    return out

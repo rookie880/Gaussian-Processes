@@ -4,8 +4,8 @@ import random
 import torch
 from torch import nn
 import matplotlib.pyplot as plt
-import gp_functions as gp
-import function_generator as fg
+from src.models import gp_functions as gp
+from src.models import function_generator as fg
 from torch.optim import Adam
 from torch.utils.data import Dataset
 torch.pi = torch.acos(torch.zeros(1)).item() * 2

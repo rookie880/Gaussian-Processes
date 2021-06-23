@@ -3,14 +3,42 @@ import random
 
 import torch
 from torch import nn
-import gp_nn
+from src.models import gp_nn
 import matplotlib.pyplot as plt
 from torch.autograd import grad
 import gpytorch
-import gp_functions as gp
-import function_generator as fg
+from src.models import gp_functions as gp
+from src.models import function_generator as fg
+import torch.nn.functional as tnf
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
+K_module = gpytorch.kernels.RBFKernel()
+def gp_pred(xobs, xstar, yobs, lengthscale, sigma2_f, sigma2_n, N):
+    K_module.lengthscale = lengthscale*lengthscale
+    temp = K_module(xstar, xobs)
+    K_star_obs = sigma2_f*temp.evaluate()
+    temp = K_module(xstar, xstar)
+    K_star_star = sigma2_f*temp.evaluate()
+    temp = K_module(xobs, xobs)
+    K_obs_obs = sigma2_f*temp.evaluate()
+
+    B = K_obs_obs+sigma2_n*torch.eye(N)
+    alpha_pred, B_LU = torch.solve(yobs, B)
+    fbar = K_star_obs @ alpha_pred
+
+    return fbar
+
+
+def linear_squeeze(x, lower, upper, flag):
+    if flag:
+        mi = torch.min(x)
+        mx = torch.max(x)
+        a = -(upper-lower)/(mi-mx)
+        b = (mi+mx)/(mi-mx)
+        fx = a*x + b
+    else:
+        fx = x
+    return fx
 
 #%% Class
 class BNN(nn.Module):
@@ -40,7 +68,7 @@ class BNN(nn.Module):
         # self.L4 = nn.Linear(self.l4_fi, self.l4_fo)
 
         # Hyper-parameters
-        self.l = torch.sqrt(torch.tensor(2.0))
+        self.l = torch.sqrt(torch.tensor(3.0))
         self.N = 200
         self.sigma2_f = 1
         self.sigma2_n = torch.tensor(0.0005)
@@ -127,35 +155,36 @@ K_module = gpytorch.kernels.RBFKernel()
 
 # Generate Data
 #y, x_space = fg.wall_pulse_func(1, 1, bnn.N, bnn.sigma2_n)
-x_space = torch.cat((torch.linspace(0, 4.75, 100), torch.linspace(5.25, 10, 100)))
+x_space = torch.cat((torch.linspace(-5, -1, 100), torch.linspace(1, 5, 100)))
 x_space = torch.reshape(x_space, (bnn.N, 1))
-y = fg.square_func(threshold=5, x=x_space, amplitude=1, n=bnn.N, sigma2_n=bnn.sigma2_n)
+y = fg.square_func(threshold=0, x=x_space, amplitude=1, n=bnn.N, sigma2_n=bnn.sigma2_n)
 
 
 
 # Plot observations
-plt.plot(x_space, y)
-plt.ylabel('y')
-plt.xlabel('x')
-plt.legend(['y(x)'])
+plt.scatter(x_space, y, 20, 'g')
+plt.ylabel(r'$y$')
+plt.xlabel(r'$x$')
+plt.legend([r'$y(x)$'])
+plt.title('Observed Square Function with sparsity around zero. $\sigma_n^2=0.0005$')
 plt.grid()
-plt.savefig('y.pdf')
+plt.savefig('./Figures/y.pdf')
 plt.show()
 
-# %% Sampling init
-T = 5000
+# %% Sampling with warm start
+T = 20000
 s = 0  # Number of samples
 e = 0  # Number of exploration stages
-L = 10  # Leapfrog steps # L = 10, ep0 = 0.005 appear to work ok
-alt_flag = False  # if true then turn on alternative posterior. using the marginal likelihood p(y|u)
-M = 5  # Number of cycles
+L = 5  # T = 5000, L = 5, alt_flag = True, M = 2, Beta = 0.2, ep0 = 0.0003/0.0008
+alt_flag = True  # if true then turn on alternative posterior. using the marginal likelihood p(y|u)
+M = 10  # Number of cycles
 beta = 0.2  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
 
 ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.0005, ep_max=0.01, ep_min=0.000002,
                                                 gamma=0.99, t_burn=500, ep_type="Cyclic")
 
 # Array init
-x_interpolate = torch.reshape(torch.linspace(0, 10, 200), (200, 1))
+x_interpolate = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
 u_interpolate_cum = 0*x_interpolate
 f_cum = torch.zeros((bnn.N, 1))
 u_cum = torch.zeros((bnn.N, 1))
@@ -165,9 +194,12 @@ theta_norm = torch.zeros(T+1)
 # HMCMC
 net = gp_nn.NN()
 net.train_nn(x_space=x_space, y=y, EPOCHS=2000, BATCH_SIZE=50)
-plt.plot(x_space, net.forward(x_space).data)
+plt.plot(x_interpolate, net.forward(x_interpolate).data, 'b')
+plt.xlabel(r'$x$')
+plt.ylabel(r'$M(x)=u$')
 plt.grid()
-plt.title('Init latent space')
+plt.title(r'Initialization. Warm start $u$-space using Neural Network')
+plt.savefig('./Figures/init_warm_start.pdf')
 plt.show()
 theta = net.get_param()
 theta_norm[0] = torch.sum(theta**2)
@@ -175,6 +207,7 @@ U_nn, ign = bnn.energy_nn(x_space, theta)
 f, U_gp = gp.gp(bnn, x_space, y, alt_flag)
 U = U_gp + U_nn
 grad_U = bnn.grad_calc(U)
+u_samples = torch.tensor([])
 
 for t in range(T):
     rp = torch.normal(torch.zeros(bnn.total_no_param), torch.ones(bnn.total_no_param))
@@ -201,7 +234,7 @@ for t in range(T):
     theta_norm[t+1] = torch.sum(theta_p ** 2)
     if (torch.fmod(torch.tensor(t-1), t_burn)/t_burn < beta and cyclic) or (t < t_burn and poly):
         #  Do exploration
-        e += 1
+        e += 1  # exploration count'
         theta = theta_p
         bnn.update_param(theta)
         U_nn = U_nn_p  # Neural Network potential energy update
@@ -224,15 +257,53 @@ for t in range(T):
             s = s + 1
             u_test = bnn.forward(x_interpolate)
             u_interpolate_cum = u_interpolate_cum + u_test
+            u_samples = torch.cat((u_samples, u_test), dim=1)
             plt.plot(x_interpolate, u_test.data, 'b', alpha=0.02)
         else:
             bnn.update_param(theta)
     print(t, ' : ', s, ' : ', e)
+
+plt.xlabel(r'$x$')
+plt.ylabel(r'$M(x)=u$')
+plt.title(r'Each sample, $M_i$, of the probabilistic mapping $M$')
+plt.grid()
+plt.savefig('./Figures/M_samples.pdf')
 plt.show()
 # %% Show results. Average over samples
+#u_samples = torch.reshape(u_samples, (s, bnn.N))
+lin_squeeze_flag = 0
 yhat = f_cum / s
 uhat = u_cum / s
 uhat_interpolate = u_interpolate_cum / s
+
+u_samples_store = u_samples
+u_samples_box = u_samples
+if lin_squeeze_flag:
+    u_samples_max = torch.max(u_samples_box, dim=1).values
+    u_samples_max = torch.reshape(u_samples_max, (s, 1))
+    u_samples_min = torch.min(u_samples_box, dim=1).values
+    u_samples_min = torch.reshape(u_samples_min, (s, 1))
+
+    a = -2/(u_samples_min-u_samples_max)
+    b = (u_samples_min+u_samples_max)/(u_samples_min-u_samples_max)
+    u_samples_box = torch.add(torch.multiply(u_samples_box, a), b)
+
+
+u_mean = torch.mean(u_samples_box, dim=0)
+u_upper = u_mean + 1.96*torch.std(u_samples_box, dim=0).data
+u_lower = u_mean - 1.96*torch.std(u_samples_box, dim=0).data
+
+plt.plot(x_interpolate, u_mean.data, 'b', label=r'$E[M]$')
+plt.plot(x_interpolate, u_upper.data, '--b', label=r'$E[M]+\sqrt{V[M]}$')
+plt.plot(x_interpolate, u_lower.data, '--b', label=r'$E[M]-\sqrt{V[M]}$')
+plt.title(r'Estimated $E[M]=\hat{u}$ and estimated $E[M]\pm\sqrt{V[M]}$')
+plt.legend()
+plt.grid()
+if lin_squeeze_flag:
+    plt.savefig('./Figures/estimated_mean_cf_lin_squeeze.pdf')
+plt.savefig('./Figures/estimated_mean_cf.pdf')
+    
+plt.show()
 
 
 # Plot Latent space
@@ -253,17 +324,35 @@ plt.show()
 
 
 # Plot Targets and filtered values yhat
-plt.scatter(x_space, y)
-plt.scatter(x_space, yhat.data)
+plt.scatter(x_space, y, 15, 'g')
+plt.scatter(x_space, yhat.data, 15, 'r')
 plt.grid()
-plt.legend(['y', 'GP(uhat) = yhat'])
-
-plt.xlabel('u')
+plt.legend(['Observations', 'Fitted Values'])
+plt.xlabel('x')
 plt.ylabel('y')
+if lin_squeeze_flag:
+    plt.savefig('./Figures/observations_fit_lin_squeeze.pdf')
+plt.savefig('./Figures/observations_fit.pdf')
 plt.show()
+
 
 plt.plot(G)
 plt.show()
 
 
-# %%
+fbar = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_mean, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+fbar_upper = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_upper, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+fbar_lower = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_lower, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+
+plt.scatter(x_space, y, 15, 'g', label='Observations')
+plt.plot(x_interpolate, fbar.data, 'r', label=r'GP-fit on $\hat{u}$')
+plt.plot(x_interpolate, fbar_upper.data, '--r', label=r'GP-fit on $\hat{u}+\sqrt{V[M]}$')
+plt.plot(x_interpolate, fbar_lower.data, '--r',  label=r'GP-fit on $\hat{u}-\sqrt{V[M]}$')
+plt.legend()
+plt.xlabel('x')
+plt.ylabel('y')
+if lin_squeeze_flag:
+    plt.savefig('./Figures/observations_interpolate_lin_squeeze.pdf')
+plt.savefig('./Figures/observations_interpolate.pdf')
+plt.grid()
+plt.show()

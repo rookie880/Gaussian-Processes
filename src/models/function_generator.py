@@ -45,11 +45,11 @@ def ep_generate(T, M, ep0, ep_max, ep_min, gamma, t_burn, ep_type):
             torch.pi * torch.fmod(torch.linspace(0, T, T), t_burn) / t_burn) + 1)
     elif ep_type == "Poly":
         poly = True
-        for t in range(T):
+        for i in range(T):
             k = (ep_min/ep_max)**(1/gamma)
             b = k*T/(1-k)
             a = ep_max*b**gamma
-            ep_space[t] = a*(b+t)**(-gamma)
+            ep_space[i] = a*(b+i)**(-gamma)
     return ep_space, t_burn, poly, cyclic
 
 
