@@ -50,7 +50,6 @@ class BNN(nn.Module):
         self.L2_fo = 32
         self.L3_fi = self.L2_fo
         self.L3_fo = 1
-        # self.l4_fi = self.L3_fo; self.l4_fo = 1
 
         self.structure = torch.tensor([[self.L1_fi, self.L1_fo], [self.L2_fi, self.L2_fo], [self.L3_fi, self.L3_fo]])
 
@@ -59,13 +58,7 @@ class BNN(nn.Module):
         self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
         self.A2 = nn.Tanh()
         self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
-        # self.L1 = nn.Linear(self.L1_fi, self.L1_fo)
-        # self.A1 = nn.ReLU()
-        # self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
-        # self.A2 = nn.ReLU()
-        # self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
-        # self.A3 = nn.ReLU()
-        # self.L4 = nn.Linear(self.l4_fi, self.l4_fo)
+
 
         # Hyper-parameters
         self.l = torch.sqrt(torch.tensor(3.0))
@@ -84,8 +77,6 @@ class BNN(nn.Module):
         x = self.L2(x)
         x = self.A2(x)
         x = self.L3(x)
-        # x = self.A3(x)
-        # u = self.L4(x)
         return x
 
     def prior(self):
@@ -172,12 +163,12 @@ plt.savefig('./Figures/y.pdf')
 plt.show()
 
 # %% Sampling with warm start
-T = 20000
+T = 5000  # T = 20000, L = 5, alt_flag = True, M = 10, Beta = 0.2, ep0 = 00.0005
 s = 0  # Number of samples
 e = 0  # Number of exploration stages
 L = 5  # T = 5000, L = 5, alt_flag = True, M = 2, Beta = 0.2, ep0 = 0.0003/0.0008
 alt_flag = True  # if true then turn on alternative posterior. using the marginal likelihood p(y|u)
-M = 10  # Number of cycles
+M = 2  # Number of cycles
 beta = 0.2  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
 
 ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.0005, ep_max=0.01, ep_min=0.000002,
@@ -259,6 +250,8 @@ for t in range(T):
             u_interpolate_cum = u_interpolate_cum + u_test
             u_samples = torch.cat((u_samples, u_test), dim=1)
             plt.plot(x_interpolate, u_test.data, 'b', alpha=0.02)
+
+
         else:
             bnn.update_param(theta)
     print(t, ' : ', s, ' : ', e)
