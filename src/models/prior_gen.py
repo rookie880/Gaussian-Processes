@@ -185,27 +185,26 @@ def length_transformation(model, x):
     l_matrix = torch.nan_to_num(l_matrix, nan=1e16)
 
     # Plot log(l_matrix) and (x,u)
-    fig, ax1 = plt.subplots()
-    ax2 = ax1.twinx()
-    ax2.plot(x, u.data, 'r')
     extent = -5, 5, -5, 5
-    ax1.imshow(torch.log(l_matrix.data), extent=extent)
-    ax1.set_xlabel('x')
-    ax1.set_ylabel('x´')
-    ax2.set_ylabel('u', color='r')
-    plt.title('Image plot of l(x,x´) together with (x,M(x)=u)')
+    plt.imshow(torch.log(l_matrix.data), extent=extent)
+    plt.xlabel('x')
+    plt.ylabel('x´')
+    plt.title(r'Image plot of $l_x(x,x´)$')
+    plt.colorbar()
     plt.savefig('./Figures/M_intuition/l_matrix_xu.pdf')
     plt.show()
+
     k_u = se_kern(u, model.l, model.sigma2)
     plt.matshow(k_u.data)
     plt.title('Kernel in u-space')
     plt.colorbar()
     plt.savefig('./Figures/M_intuition/kernel_u.pdf')
     plt.show()
+
     plt.plot(x, u.data, 'r')
-    plt.title('M transformation')
+    plt.title(r'The Transformation $M$')
     plt.xlabel('x')
-    plt.ylabel('M(x) = u')
+    plt.ylabel(r'M(x) = u')
     plt.grid()
     plt.savefig('./Figures/M_intuition/M_transformation_example.pdf')
     plt.show()
@@ -214,10 +213,10 @@ def length_transformation(model, x):
     out = model.sigma2*torch.exp(-exponent)
     plt.matshow(out.data)
     plt.colorbar()
-    plt.title('Kernel in x-space using l(x,x´)')
+    plt.title(r'Kernel in x-space using $l_M(x,x´)$')
     plt.savefig('./Figures/M_intuition/kernel_l_xx.pdf')
     plt.show()
-length_transformation(net, x_space)
+
 
 # %% Generate Data
 net = NN()
@@ -233,13 +232,8 @@ x_space = torch.reshape(torch.linspace(-5, 5, net.N), (net.N, 1))
 
 y = square_func(0, x_space, 1, net.N)
 
-# Observations
-plt.scatter(x_space, y, 20, 'b')
-plt.legend(['M(x)=u', 'y=GP(u)'])
-plt.show()
-
 # %% Sampling
-T = 10000
+T = 5
 s = 0  # Number of samples
 L = 5  # Leapfrog steps
 ep0 = 0.01
@@ -310,6 +304,10 @@ for t in range(T):
     print(t)
     print(s)
 plt.show()
+
+#%%
+length_transformation(net, x_space)
+
 # %% Show results
 # Average over samples
 f_mean = fm / s
