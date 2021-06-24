@@ -146,7 +146,8 @@ K_module = gpytorch.kernels.RBFKernel()
 
 # Generate Data
 #y, x_space = fg.wall_pulse_func(1, 1, bnn.N, bnn.sigma2_n)
-x_space = torch.cat((torch.linspace(-5, -1, 100), torch.linspace(1, 5, 100)))
+thold_x = 2
+x_space = torch.cat((torch.linspace(-5, -thold_x, 100), torch.linspace(thold_x, 5, 100)))
 x_space = torch.reshape(x_space, (bnn.N, 1))
 y = fg.square_func(threshold=0, x=x_space, amplitude=1, n=bnn.N, sigma2_n=bnn.sigma2_n)
 
@@ -162,16 +163,16 @@ plt.grid()
 plt.savefig('./Figures/y.pdf')
 plt.show()
 
-# %% Sampling with warm start
-T = 5000  # T = 20000, L = 5, alt_flag = True, M = 10, Beta = 0.2, ep0 = 00.0005
+ # %% Sampling with warm start
+T = 20000  # T = 20000, L = 5, alt_flag = True, M = 10, Beta = 0.2, ep0 = 0.0005
 s = 0  # Number of samples
 e = 0  # Number of exploration stages
 L = 5  # T = 5000, L = 5, alt_flag = True, M = 2, Beta = 0.2, ep0 = 0.0003/0.0008
 alt_flag = True  # if true then turn on alternative posterior. using the marginal likelihood p(y|u)
-M = 2  # Number of cycles
+M = 10  # Number of cycles
 beta = 0.2  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
 
-ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.0005, ep_max=0.01, ep_min=0.000002,
+ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.002, ep_max=0.0008, ep_min=0.000002,
                                                 gamma=0.99, t_burn=500, ep_type="Cyclic")
 
 # Array init
@@ -199,6 +200,7 @@ f, U_gp = gp.gp(bnn, x_space, y, alt_flag)
 U = U_gp + U_nn
 grad_U = bnn.grad_calc(U)
 u_samples = torch.tensor([])
+f_samples = torch.tensor([])
 
 for t in range(T):
     rp = torch.normal(torch.zeros(bnn.total_no_param), torch.ones(bnn.total_no_param))
@@ -246,10 +248,14 @@ for t in range(T):
             f_cum = f_cum + fp
             u_cum = u_cum + up
             s = s + 1
-            u_test = bnn.forward(x_interpolate)
-            u_interpolate_cum = u_interpolate_cum + u_test
-            u_samples = torch.cat((u_samples, u_test), dim=1)
-            plt.plot(x_interpolate, u_test.data, 'b', alpha=0.02)
+            u_interpolate = bnn.forward(x_interpolate)
+            u_interpolate_cum = u_interpolate_cum + u_interpolate
+            u_samples = torch.cat((u_samples, u_interpolate), dim=1)
+            plt.plot(x_interpolate, u_interpolate.data, 'b', alpha=0.02)
+
+            fbar = gp_pred(up, u_interpolate, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+            f_samples = torch.cat((f_samples, fbar), dim=1)
+
 
 
         else:
@@ -262,8 +268,9 @@ plt.title(r'Each sample, $M_i$, of the probabilistic mapping $M$')
 plt.grid()
 plt.savefig('./Figures/M_samples.pdf')
 plt.show()
+u_samples = u_samples.t()
+f_samples = f_samples.t()
 # %% Show results. Average over samples
-#u_samples = torch.reshape(u_samples, (s, bnn.N))
 lin_squeeze_flag = 0
 yhat = f_cum / s
 uhat = u_cum / s
@@ -271,6 +278,7 @@ uhat_interpolate = u_interpolate_cum / s
 
 u_samples_store = u_samples
 u_samples_box = u_samples
+f_samples_box = f_samples
 if lin_squeeze_flag:
     u_samples_max = torch.max(u_samples_box, dim=1).values
     u_samples_max = torch.reshape(u_samples_max, (s, 1))
@@ -285,20 +293,55 @@ if lin_squeeze_flag:
 u_mean = torch.mean(u_samples_box, dim=0)
 u_upper = u_mean + 1.96*torch.std(u_samples_box, dim=0).data
 u_lower = u_mean - 1.96*torch.std(u_samples_box, dim=0).data
+f_mean = torch.mean(f_samples_box, dim=0)
+f_upper = f_mean + 1.96*torch.std(f_samples_box, dim=0).data
+f_lower = f_mean - 1.96*torch.std(f_samples_box, dim=0).data
+delta_lower_upper = torch.sum(torch.abs(f_upper-f_lower))/(thold_x*2)
 
 plt.plot(x_interpolate, u_mean.data, 'b', label=r'$E[M]$')
 plt.plot(x_interpolate, u_upper.data, '--b', label=r'$E[M]+\sqrt{V[M]}$')
 plt.plot(x_interpolate, u_lower.data, '--b', label=r'$E[M]-\sqrt{V[M]}$')
-plt.title(r'Estimated $E[M]=\hat{u}$ and estimated $E[M]\pm\sqrt{V[M]}$')
+plt.title(r'Estimated $E[M]=\hat{u}$ and estimated $E[M]\pm1.96\sqrt{V[M]}$')
 plt.legend()
 plt.grid()
 if lin_squeeze_flag:
     plt.savefig('./Figures/estimated_mean_cf_lin_squeeze.pdf')
 plt.savefig('./Figures/estimated_mean_cf.pdf')
-    
+plt.show()
+
+plt.scatter(x_space, y, 15, 'g', label='Observations')
+plt.plot(x_interpolate, f_mean.data, 'r', label=r'$\hat{y}$')
+plt.plot(x_interpolate, f_upper.data, '--r', label=r'$\hat{y}+\sqrt{\hat{y}}$')
+plt.plot(x_interpolate, f_lower.data, '--r', label=r'$\hat{y}-\sqrt{\hat{y}}$')
+plt.title(r'$\hat{y}$ and $\hat{y}\pm1.96\sqrt{V[\hat{y}]}$')
+plt.legend()
+plt.grid()
+if lin_squeeze_flag:
+    plt.savefig('./Figures/estimated_f_cf_lin_squeeze.pdf')
+plt.savefig('./Figures/estimated_f_cf.pdf')
 plt.show()
 
 
+
+#%%
+fbar = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_mean, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+fbar_upper = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_upper, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+fbar_lower = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_lower, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+
+plt.scatter(x_space, y, 15, 'g', label='Observations')
+plt.plot(x_interpolate, fbar.data, 'r', label=r'GP-fit on $\hat{u}$')
+plt.plot(x_interpolate, fbar_upper.data, '--r', label=r'GP-fit on $\hat{u}+\sqrt{V[M]}$')
+plt.plot(x_interpolate, fbar_lower.data, '--r',  label=r'GP-fit on $\hat{u}-\sqrt{V[M]}$')
+plt.legend()
+plt.xlabel('x')
+plt.ylabel('y')
+if lin_squeeze_flag:
+    plt.savefig('./Figures/observations_interpolate_lin_squeeze.pdf')
+plt.savefig('./Figures/observations_interpolate.pdf')
+plt.grid()
+plt.show()
+
+#%%
 # Plot Latent space
 plt.plot(x_space, uhat.data)
 plt.grid()
@@ -315,7 +358,6 @@ plt.xlabel('x')
 plt.ylabel('u')
 plt.show()
 
-
 # Plot Targets and filtered values yhat
 plt.scatter(x_space, y, 15, 'g')
 plt.scatter(x_space, yhat.data, 15, 'r')
@@ -326,26 +368,4 @@ plt.ylabel('y')
 if lin_squeeze_flag:
     plt.savefig('./Figures/observations_fit_lin_squeeze.pdf')
 plt.savefig('./Figures/observations_fit.pdf')
-plt.show()
-
-
-plt.plot(G)
-plt.show()
-
-
-fbar = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_mean, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
-fbar_upper = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_upper, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
-fbar_lower = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_lower, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
-
-plt.scatter(x_space, y, 15, 'g', label='Observations')
-plt.plot(x_interpolate, fbar.data, 'r', label=r'GP-fit on $\hat{u}$')
-plt.plot(x_interpolate, fbar_upper.data, '--r', label=r'GP-fit on $\hat{u}+\sqrt{V[M]}$')
-plt.plot(x_interpolate, fbar_lower.data, '--r',  label=r'GP-fit on $\hat{u}-\sqrt{V[M]}$')
-plt.legend()
-plt.xlabel('x')
-plt.ylabel('y')
-if lin_squeeze_flag:
-    plt.savefig('./Figures/observations_interpolate_lin_squeeze.pdf')
-plt.savefig('./Figures/observations_interpolate.pdf')
-plt.grid()
 plt.show()
