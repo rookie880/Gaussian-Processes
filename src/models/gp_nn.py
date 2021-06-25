@@ -28,14 +28,14 @@ class NN(nn.Module):
         self.A1 = nn.Tanh()
         self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
         self.A2 = nn.Tanh()
-        self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
+        self.L3 = nn.Linear(self.L3_fi, self.L3_fo, bias=False)
 
         # Hyper-parameters
-        self.l = torch.sqrt(torch.tensor(1))
-        self.N = 200
-        self.sigma2_f = 1
-        self.sigma2_n = torch.tensor(0.0005)
-        self.sigma_prior = 1
+        self.l = 0
+        self.N = 0
+        self.sigma2_f = 0
+        self.sigma2_n = 0
+        self.sigma_prior = 0
         self.total_no_param = 0
 
         self.optm = Adam(self.parameters(), lr=0.001)

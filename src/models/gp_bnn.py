@@ -1,5 +1,4 @@
 # %% Libraries
-import random
 
 import torch
 from torch import nn
@@ -9,7 +8,6 @@ from torch.autograd import grad
 import gpytorch
 from src.models import gp_functions as gp
 from src.models import function_generator as fg
-import torch.nn.functional as tnf
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
 K_module = gpytorch.kernels.RBFKernel()
@@ -29,17 +27,6 @@ def gp_pred(xobs, xstar, yobs, lengthscale, sigma2_f, sigma2_n, N):
     return fbar
 
 
-def linear_squeeze(x, lower, upper, flag):
-    if flag:
-        mi = torch.min(x)
-        mx = torch.max(x)
-        a = -(upper-lower)/(mi-mx)
-        b = (mi+mx)/(mi-mx)
-        fx = a*x + b
-    else:
-        fx = x
-    return fx
-
 #%% Class
 class BNN(nn.Module):
     def __init__(self):
@@ -57,19 +44,16 @@ class BNN(nn.Module):
         self.A1 = nn.Tanh()
         self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
         self.A2 = nn.Tanh()
-        self.L3 = nn.Linear(self.L3_fi, self.L3_fo)
-
+        self.L3 = nn.Linear(self.L3_fi, self.L3_fo, bias=False)
 
         # Hyper-parameters
-        self.l = torch.sqrt(torch.tensor(3.0))
-        self.N = 200
-        self.sigma2_f = 1
-        self.sigma2_n = torch.tensor(0.0005)
-        self.sigma2_prior = 0.1
-        self.sigma2_likelihood = 0.5
+        self.l = 0
+        self.N = 0
+        self.sigma2_f = 0
+        self.sigma2_n = 0
+        self.sigma2_prior = 0
+        self.sigma2_likelihood = 0
         self.total_no_param = 0
-
-        # Aux variables
 
     def forward(self, x):
         x = self.L1(x)
@@ -134,15 +118,18 @@ class BNN(nn.Module):
         return out
 
 
+# %% Generate Data
 bnn = BNN()
+bnn.l = torch.sqrt(torch.tensor(2.0))
+bnn.N = 200
+bnn.sigma2_f = 1
+bnn.sigma2_n = torch.tensor(0.0005)
+bnn.sigma_prior = 1
 bnn.get_total_no_param()
 bnn.prior()
 
-
 # Init Kernel Module
 K_module = gpytorch.kernels.RBFKernel()
-
-# %% Generate Data
 
 # Generate Data
 #y, x_space = fg.wall_pulse_func(1, 1, bnn.N, bnn.sigma2_n)
@@ -163,7 +150,7 @@ plt.grid()
 plt.savefig('./Figures/y.pdf')
 plt.show()
 
- # %% Sampling with warm start
+# %% Sampling with warm start
 T = 5000  # T = 20000, L = 5, alt_flag = True, M = 10, Beta = 0.2, ep0 = 0.0005
 s = 0  # Number of samples
 e = 0  # Number of exploration stages
@@ -172,7 +159,7 @@ alt_flag = True  # if true then turn on alternative posterior. using the margina
 M = 2  # Number of cycles
 beta = 0.2  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
 
-ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.002, ep_max=0.0008, ep_min=0.000002,
+ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.0005, ep_max=0.0008, ep_min=0.000002,
                                                 gamma=0.99, t_burn=500, ep_type="Cyclic")
 
 # Array init
@@ -185,6 +172,12 @@ theta_norm = torch.zeros(T+1)
 
 # HMCMC
 net = gp_nn.NN()
+net.l = bnn.l
+net.N = bnn.N
+net.sigma2_f = bnn.sigma2_f
+net.sigma2_n = bnn.sigma2_n
+net.sigma_prior = bnn.sigma_prior
+
 net.train_nn(x_space=x_space, y=y, EPOCHS=2000, BATCH_SIZE=50)
 plt.plot(x_interpolate, net.forward(x_interpolate).data, 'b')
 plt.xlabel(r'$x$')
@@ -273,7 +266,6 @@ plt.show()
 u_samples = u_samples.t()
 f_samples = f_samples.t()
 # %% Show results. Average over samples
-lin_squeeze_flag = 0
 yhat = f_cum / s
 uhat = u_cum / s
 uhat_interpolate = u_interpolate_cum / s
@@ -281,16 +273,6 @@ uhat_interpolate = u_interpolate_cum / s
 u_samples_store = u_samples
 u_samples_box = u_samples
 f_samples_box = f_samples
-if lin_squeeze_flag:
-    u_samples_max = torch.max(u_samples_box, dim=1).values
-    u_samples_max = torch.reshape(u_samples_max, (s, 1))
-    u_samples_min = torch.min(u_samples_box, dim=1).values
-    u_samples_min = torch.reshape(u_samples_min, (s, 1))
-
-    a = -2/(u_samples_min-u_samples_max)
-    b = (u_samples_min+u_samples_max)/(u_samples_min-u_samples_max)
-    u_samples_box = torch.add(torch.multiply(u_samples_box, a), b)
-
 
 u_mean = torch.mean(u_samples_box, dim=0)
 u_upper = u_mean + 1.96*torch.std(u_samples_box, dim=0).data
@@ -301,34 +283,68 @@ f_lower = f_mean - 1.96*torch.std(f_samples_box, dim=0).data
 delta_lower_upper = torch.sum(torch.abs(f_upper-f_lower))/(thold_x*2)
 
 plt.plot(x_interpolate, u_mean.data, 'b', label=r'$E[M]$')
-plt.plot(x_interpolate, u_upper.data, '--b', label=r'$E[M]+\sqrt{V[M]}$')
-plt.plot(x_interpolate, u_lower.data, '--b', label=r'$E[M]-\sqrt{V[M]}$')
-plt.title(r'Estimated $E[M]=\hat{u}$ and estimated $E[M]\pm1.96\sqrt{V[M]}$')
+plt.plot(x_interpolate, u_upper.data, '--b', label='95% Confidence Interval')
+plt.plot(x_interpolate, u_lower.data, '--b')
+plt.title(r'Estimated $E[M]=\hat{u}$ and 95% CI')
 plt.legend()
 plt.grid()
-if lin_squeeze_flag:
-    plt.savefig('./Figures/estimated_mean_cf_lin_squeeze.pdf')
-plt.savefig('./Figures/estimated_mean_cf.pdf')
+plt.savefig('./Figures/estimated_mean_cf_'+str(thold_x)+'.pdf')
 plt.show()
 
 plt.scatter(x_space, y, 15, 'g', label='Observations')
-plt.plot(x_interpolate, f_mean.data, 'r', label=r'$\hat{y}$')
-plt.plot(x_interpolate, f_upper.data, '--r', label=r'$\hat{y}+\sqrt{\hat{y}}$')
-plt.plot(x_interpolate, f_lower.data, '--r', label=r'$\hat{y}-\sqrt{\hat{y}}$')
-plt.title(r'$\hat{y}$ and $\hat{y}\pm1.96\sqrt{V[\hat{y}]}$')
+plt.plot(x_interpolate, f_mean.data, 'r', label=r'$\hat{f}$')
+plt.plot(x_interpolate, f_upper.data, '--r', label=r'95%  CI')
+plt.plot(x_interpolate, f_lower.data, '--r')
+plt.title(r'$\hat{f}$, 95% CI'+' and CI area ='+r'{:.2f}'.format(delta_lower_upper.item()))
 plt.legend()
 plt.grid()
-if lin_squeeze_flag:
-    plt.savefig('./Figures/estimated_f_cf_lin_squeeze.pdf')
-plt.savefig('./Figures/estimated_f_cf.pdf')
+plt.savefig('./Figures/estimated_f_cf_'+str(thold_x)+'.pdf')
 plt.show()
 
+#%% Calculate Kernel mean and Variance
+K_tensor = torch.zeros((bnn.N, bnn.N, s))
+for i in range(s):
+    temp = u_samples_box[i, :]
+    K_tensor[:, :, i] = gp.se_kern(temp, bnn.l, bnn.sigma2_f)
 
+#%% plot kernel mean and variance
+K_mean = torch.mean(K_tensor, dim=2)
+plt.imshow(K_mean.data)
+plt.title(r'Mean kernel, $\bar{K}_{**}^{}$. $\Delta=$'+str(2*thold_x))
+plt.colorbar()
+plt.savefig('./Figures/mean_kernel_'+str(thold_x)+'.pdf')
+plt.show()
+
+K_std = torch.std(K_tensor, dim=2)
+plt.imshow(K_std.data)
+plt.title(r'Standard deviation of sampled kernels, $\sqrt{V[K_{**}^{}]}$. $\Delta=$'+str(2*thold_x))
+plt.colorbar()
+plt.savefig('./Figures/std_kernel_'+str(thold_x)+'.pdf')
+plt.show()
 
 #%%
-fbar = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_mean, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
-fbar_upper = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_upper, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
-fbar_lower = gp_pred(linear_squeeze(uhat, -1, 1, lin_squeeze_flag), u_lower, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+for j in range(s):
+    plt.imshow(K_tensor[:, :, j].data)
+    plt.clim(0.95, 1)
+    plt.colorbar()
+    plt.savefig('./Figures/kernel_movie/'+str(j)+'.png')
+    plt.draw()
+    plt.clf()
+    plt.close('all')
+
+
+
+#%% Plot all latent space samples
+plt.plot(x_interpolate, u_samples_box.data.t(), 'b', alpha=0.002)
+plt.title(r'All samples in $u$-space. $M(X_*^{} ;\theta_s)=U_*^{(s)}$')
+plt.grid()
+plt.savefig('./Figures/M_samples_'+str(thold_x)+'.pdf')
+plt.show()
+
+#%%
+fbar = gp_pred(uhat, u_mean, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+fbar_upper = gp_pred(uhat, u_upper, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+fbar_lower = gp_pred(uhat, u_lower, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
 
 plt.scatter(x_space, y, 15, 'g', label='Observations')
 plt.plot(x_interpolate, fbar.data, 'r', label=r'GP-fit on $\hat{u}$')
@@ -337,14 +353,11 @@ plt.plot(x_interpolate, fbar_lower.data, '--r',  label=r'GP-fit on $\hat{u}-\sqr
 plt.legend()
 plt.xlabel('x')
 plt.ylabel('y')
-if lin_squeeze_flag:
-    plt.savefig('./Figures/observations_interpolate_lin_squeeze.pdf')
 plt.savefig('./Figures/observations_interpolate.pdf')
 plt.grid()
 plt.show()
 
-#%%
-# Plot Latent space
+#%% Plot Latent space
 plt.plot(x_space, uhat.data)
 plt.grid()
 plt.legend(['Mhat(x) = uhat'])
@@ -367,7 +380,5 @@ plt.grid()
 plt.legend(['Observations', 'Fitted Values'])
 plt.xlabel('x')
 plt.ylabel('y')
-if lin_squeeze_flag:
-    plt.savefig('./Figures/observations_fit_lin_squeeze.pdf')
 plt.savefig('./Figures/observations_fit.pdf')
 plt.show()
