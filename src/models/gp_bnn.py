@@ -164,12 +164,12 @@ plt.savefig('./Figures/y.pdf')
 plt.show()
 
  # %% Sampling with warm start
-T = 20000  # T = 20000, L = 5, alt_flag = True, M = 10, Beta = 0.2, ep0 = 0.0005
+T = 5000  # T = 20000, L = 5, alt_flag = True, M = 10, Beta = 0.2, ep0 = 0.0005
 s = 0  # Number of samples
 e = 0  # Number of exploration stages
 L = 5  # T = 5000, L = 5, alt_flag = True, M = 2, Beta = 0.2, ep0 = 0.0003/0.0008
 alt_flag = True  # if true then turn on alternative posterior. using the marginal likelihood p(y|u)
-M = 10  # Number of cycles
+M = 2  # Number of cycles
 beta = 0.2  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
 
 ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.002, ep_max=0.0008, ep_min=0.000002,
@@ -213,7 +213,9 @@ for t in range(T):
     ep = ep_space[t]
     for i in range(L):
         rp = rp - ep * grad_U_p * 0.5
+        #theta_p = theta_p + ep * rp
         theta_p = theta_p + ep * rp
+
 
         # Calculate gradient of U_p
         bnn.update_param(theta_p)
