@@ -89,28 +89,34 @@ class BNN(nn.Module):
         return (ll_nn + lp_nn), u_latent
 
     def update_param(self, theta_param):
+        # Theta_param is a vector consisting of all neural network parameter
+        # Load theta_param into the neural network parameter
         theta_dict = self.state_dict()
         c = 0
+        # Construct a parameter dictionary from theta_param
         for param_tensor in theta_dict:
-            s = theta_dict[param_tensor].size()
-            n = s.numel()
-            param = torch.reshape(theta_param[c:c + n], s)
-            c = c + n
-            theta_dict[param_tensor] = param
-        self.load_state_dict(theta_dict)
+            s = theta_dict[param_tensor].size()  # Get size of current weight matrix
+            n = s.numel()  # number of elements
+            param = torch.reshape(theta_param[c:c + n], s)  # reshape the part of theta_param
+            c = c + n  # index to monitor how far we are in theta_param
+            theta_dict[param_tensor] = param  # store in the parameter dictionary
+        self.load_state_dict(theta_dict)  # update parameter dictionary
 
+    # calculate dE_U(theta)/dtheta
     def grad_calc(self, energy):
-        self.zero_grad()
-        temp = grad(energy, self.parameters())
+        self.zero_grad()  # reset gradients
+        temp = grad(energy, self.parameters())  # dE_U(theta)/dtheta stores as dictionary
         grads = []
+        # convert temp into vector
         for g in temp:
             grads.append(g.view(-1))
         grads = torch.cat(grads)
         return grads
 
+    # Get current parameters as a vector
     def get_param(self):
-        theta_dict = self.state_dict()
-        out = []
+        theta_dict = self.state_dict()  # Parameter dictionary
+        out = []  # Parameter vector init
         for param_tensor in theta_dict:
             temp = theta_dict[param_tensor]
             out.append(temp.view(-1))
@@ -120,7 +126,7 @@ class BNN(nn.Module):
 
 # %% Generate Data
 bnn = BNN()
-bnn.l = torch.sqrt(torch.tensor(2.0))
+bnn.l = torch.sqrt(torch.tensor(1.0))
 bnn.N = 200
 bnn.sigma2_f = 1
 bnn.sigma2_n = torch.tensor(0.0005)
@@ -311,6 +317,7 @@ for i in range(s):
 K_mean = torch.mean(K_tensor, dim=2)
 plt.imshow(K_mean.data)
 plt.title(r'Mean kernel, $\bar{K}_{**}^{}$. $\Delta=$'+str(2*thold_x))
+plt.clim(0.95, bnn.sigma2_f)
 plt.colorbar()
 plt.savefig('./Figures/mean_kernel_'+str(thold_x)+'.pdf')
 plt.show()
@@ -318,6 +325,7 @@ plt.show()
 K_std = torch.std(K_tensor, dim=2)
 plt.imshow(K_std.data)
 plt.title(r'Standard deviation of sampled kernels, $\sqrt{V[K_{**}^{}]}$. $\Delta=$'+str(2*thold_x))
+plt.clim(0, 0.030)
 plt.colorbar()
 plt.savefig('./Figures/std_kernel_'+str(thold_x)+'.pdf')
 plt.show()
