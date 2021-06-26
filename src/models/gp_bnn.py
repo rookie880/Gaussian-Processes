@@ -1,136 +1,25 @@
 # %% Libraries
-
+import numpy as np
 import torch
-from torch import nn
-from src.models import gp_nn
+from src.models import gp_nn_class
 import matplotlib.pyplot as plt
-from torch.autograd import grad
+from src.models import gp_bnn_class
 import gpytorch
 from src.models import gp_functions as gp
 from src.models import function_generator as fg
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
-
 K_module = gpytorch.kernels.RBFKernel()
-def gp_pred(xobs, xstar, yobs, lengthscale, sigma2_f, sigma2_n, N):
-    K_module.lengthscale = lengthscale*lengthscale
-    temp = K_module(xstar, xobs)
-    K_star_obs = sigma2_f*temp.evaluate()
-    temp = K_module(xstar, xstar)
-    K_star_star = sigma2_f*temp.evaluate()
-    temp = K_module(xobs, xobs)
-    K_obs_obs = sigma2_f*temp.evaluate()
 
-    B = K_obs_obs+sigma2_n*torch.eye(N)
-    alpha_pred, B_LU = torch.solve(yobs, B)
-    fbar = K_star_obs @ alpha_pred
-
-    return fbar
-
-
-#%% Class
-class BNN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.L1_fi = 1
-        self.L1_fo = 32
-        self.L2_fi = self.L1_fo
-        self.L2_fo = 32
-        self.L3_fi = self.L2_fo
-        self.L3_fo = 1
-
-        self.structure = torch.tensor([[self.L1_fi, self.L1_fo], [self.L2_fi, self.L2_fo], [self.L3_fi, self.L3_fo]])
-
-        self.L1 = nn.Linear(self.L1_fi, self.L1_fo)
-        self.A1 = nn.Tanh()
-        self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
-        self.A2 = nn.Tanh()
-        self.L3 = nn.Linear(self.L3_fi, self.L3_fo, bias=False)
-
-        # Hyper-parameters
-        self.l = 0
-        self.N = 0
-        self.sigma2_f = 0
-        self.sigma2_n = 0
-        self.sigma2_prior = 0
-        self.sigma2_likelihood = 0
-        self.total_no_param = 0
-
-    def forward(self, x):
-        x = self.L1(x)
-        x = self.A1(x)
-        x = self.L2(x)
-        x = self.A2(x)
-        x = self.L3(x)
-        return x
-
-    def prior(self):
-        theta_sample = torch.normal(torch.zeros(self.total_no_param),
-                                    torch.ones(self.total_no_param) * self.sigma2_prior)
-        self.update_param(theta_sample)
-        return
-
-    def get_total_no_param(self):
-        theta_dict = self.state_dict()
-        t1 = []
-        for param_tensor in theta_dict:
-            t2 = theta_dict[param_tensor]
-            t1.append(t2.view(-1))
-        t1 = torch.cat(t1)
-        self.total_no_param = len(t1)
-        return
-
-    def energy_nn(self, x, theta_param):
-        u_latent = self.forward(x)
-        # temp = x - u # Bias toward M(x) = x = u, will only work for n = m
-        temp = u_latent  # Bias toward M(x) = 0
-
-        ll_nn = torch.sum(temp ** 2) / self.sigma2_likelihood
-        lp_nn = torch.sum(theta_param ** 2) / self.sigma2_prior
-        return (ll_nn + lp_nn), u_latent
-
-    def update_param(self, theta_param):
-        # Theta_param is a vector consisting of all neural network parameter
-        # Load theta_param into the neural network parameter
-        theta_dict = self.state_dict()
-        c = 0
-        # Construct a parameter dictionary from theta_param
-        for param_tensor in theta_dict:
-            s = theta_dict[param_tensor].size()  # Get size of current weight matrix
-            n = s.numel()  # number of elements
-            param = torch.reshape(theta_param[c:c + n], s)  # reshape the part of theta_param
-            c = c + n  # index to monitor how far we are in theta_param
-            theta_dict[param_tensor] = param  # store in the parameter dictionary
-        self.load_state_dict(theta_dict)  # update parameter dictionary
-
-    # calculate dE_U(theta)/dtheta
-    def grad_calc(self, energy):
-        self.zero_grad()  # reset gradients
-        temp = grad(energy, self.parameters())  # dE_U(theta)/dtheta stores as dictionary
-        grads = []
-        # convert temp into vector
-        for g in temp:
-            grads.append(g.view(-1))
-        grads = torch.cat(grads)
-        return grads
-
-    # Get current parameters as a vector
-    def get_param(self):
-        theta_dict = self.state_dict()  # Parameter dictionary
-        out = []  # Parameter vector init
-        for param_tensor in theta_dict:
-            temp = theta_dict[param_tensor]
-            out.append(temp.view(-1))
-        out = torch.cat(out)
-        return out
 
 
 # %% Generate Data
-bnn = BNN()
+bnn = gp_bnn_class.BNN()
+bnn.sigma2_likelihood = 1
 bnn.l = torch.sqrt(torch.tensor(1.0))
 bnn.N = 200
 bnn.sigma2_f = 1
 bnn.sigma2_n = torch.tensor(0.0005)
-bnn.sigma_prior = 1
+bnn.sigma2_prior = 1
 bnn.get_total_no_param()
 bnn.prior()
 
@@ -139,67 +28,54 @@ K_module = gpytorch.kernels.RBFKernel()
 
 # Generate Data
 #y, x_space = fg.wall_pulse_func(1, 1, bnn.N, bnn.sigma2_n)
-thold_x = 2
+thold_x = -1
+#x_space = torch.cat((torch.linspace(-5, -thold_x, 100), torch.linspace(thold_x, 5, 100)))
+#x_space = torch.reshape(x_space, (bnn.N, 1))
+#y = fg.square_func(threshold=0, x=x_space, amplitude=1, n=bnn.N, sigma2_n=bnn.sigma2_n)
+
 x_space = torch.cat((torch.linspace(-5, -thold_x, 100), torch.linspace(thold_x, 5, 100)))
 x_space = torch.reshape(x_space, (bnn.N, 1))
-y = fg.square_func(threshold=0, x=x_space, amplitude=1, n=bnn.N, sigma2_n=bnn.sigma2_n)
-
-
-
-# Plot observations
-plt.scatter(x_space, y, 20, 'g')
-plt.ylabel(r'$y$')
-plt.xlabel(r'$x$')
-plt.legend([r'$y(x)$'])
-plt.title('Observed Square Function with sparsity around zero. $\sigma_n^2=0.0005$')
-plt.grid()
-plt.savefig('./Figures/y.pdf')
-plt.show()
+y = torch.zeros((bnn.N, 1))
+eta = fg.square_func(threshold=10, x=x_space, amplitude=1, n=bnn.N, sigma2_n=bnn.sigma2_n)
+y[0:100, 0] = -1
+y[100:bnn.N, 0] = 1
+y = y + eta
 
 # %% Sampling with warm start
-T = 5000  # T = 20000, L = 5, alt_flag = True, M = 10, Beta = 0.2, ep0 = 0.0005
+T = 20000  # T = 20000, L = 5, alt_flag = True, M = 10, Beta = 0.2, ep0 = 0.0005
 s = 0  # Number of samples
 e = 0  # Number of exploration stages
 L = 5  # T = 5000, L = 5, alt_flag = True, M = 2, Beta = 0.2, ep0 = 0.0003/0.0008
-alt_flag = True  # if true then turn on alternative posterior. using the marginal likelihood p(y|u)
-M = 2  # Number of cycles
+alt_flag = True  # if true then turn on posterior that use the marginal likelihood p(y|u)
+M = int(T/50)  # Number of cycles
 beta = 0.2  # Proportion of exploration stage, take beta proportion of each cyclic to use exploration only
 
-ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.0005, ep_max=0.0008, ep_min=0.000002,
+ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.0008, ep_max=0.0008, ep_min=0.000002,
                                                 gamma=0.99, t_burn=500, ep_type="Cyclic")
 
-# Array init
-x_interpolate = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
-u_interpolate_cum = 0*x_interpolate
-f_cum = torch.zeros((bnn.N, 1))
-u_cum = torch.zeros((bnn.N, 1))
-G = torch.zeros(T)
-theta_norm = torch.zeros(T+1)
+## HMCMC ##
 
-# HMCMC
-net = gp_nn.NN()
-net.l = bnn.l
-net.N = bnn.N
-net.sigma2_f = bnn.sigma2_f
-net.sigma2_n = bnn.sigma2_n
-net.sigma_prior = bnn.sigma_prior
-
+# Warm start using neural network minimizing negative log marginal likelihood (NLML)
+net = gp_nn_class.NN()
+net.l = bnn.l; net.N = bnn.N; net.sigma2_f = bnn.sigma2_f; net.sigma2_n = bnn.sigma2_n  # Same hyper-parameters as the BNN
 net.train_nn(x_space=x_space, y=y, EPOCHS=2000, BATCH_SIZE=50)
-plt.plot(x_interpolate, net.forward(x_interpolate).data, 'b')
-plt.xlabel(r'$x$')
-plt.ylabel(r'$M(x)=u$')
-plt.grid()
-plt.title(r'Initialization. Warm start $u$-space using Neural Network')
-plt.savefig('./Figures/init_warm_start.pdf')
-plt.show()
-theta = net.get_param()
-theta_norm[0] = torch.sum(theta**2)
-U_nn, ign = bnn.energy_nn(x_space, theta)
-f, U_gp = gp.gp(bnn, x_space, y, alt_flag)
+theta = net.get_param()  # Get the warm start parameters
+
+# init energies and gradients
+U_nn, _ = bnn.energy_nn(x_space, theta)
+_, U_gp = gp.gp(bnn, x_space, y, alt_flag)
 U = U_gp + U_nn
 grad_U = bnn.grad_calc(U)
-u_samples = torch.tensor([])
-f_samples = torch.tensor([])
+
+# Init tensors to store samples
+u_samples = torch.zeros((T, bnn.N))  # u-space samples
+f_samples = torch.zeros((T, bnn.N))  # Prediction from each u sample
+G = torch.zeros(T)  # \grad E_U(theta) Gradient L2-norm for each t.
+U_nn_p = np.nan; U_gp_p = np.nan; up = torch.zeros(bnn.N, 1)
+
+# interpolating/prediction input points
+x_interpolate = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
+
 
 for t in range(T):
     rp = torch.normal(torch.zeros(bnn.total_no_param), torch.ones(bnn.total_no_param))
@@ -209,14 +85,13 @@ for t in range(T):
     U_p = U
 
     # Leapfrog
-    ep = ep_space[t]
+    ep = ep_space[t]  # Take current stepsize
     for i in range(L):
-        rp = rp - ep * grad_U_p * 0.5
-        #theta_p = theta_p + ep * rp
-        theta_p = theta_p + ep * rp
 
+        rp = rp - ep * grad_U_p * 0.5  # Half step momentum
+        theta_p = theta_p + ep * rp  # full step position/parameter
 
-        # Calculate gradient of U_p
+        # Calculate gradient of U_p (\gradE_U(theta'))
         bnn.update_param(theta_p)
         U_nn_p, up = bnn.energy_nn(x_space, theta_p)  # NN pot. Energy
         fp, U_gp_p = gp.gp(bnn, x_space, y, alt_flag)  # GP Pot. Energy
@@ -225,12 +100,10 @@ for t in range(T):
         rp = rp - ep * grad_U_p * 0.5
 
     G[t] = torch.sqrt(torch.sum(grad_U_p ** 2)) / bnn.total_no_param  # Norm of Gradient
-    theta_norm[t+1] = torch.sum(theta_p ** 2)
     if (torch.fmod(torch.tensor(t-1), t_burn)/t_burn < beta and cyclic) or (t < t_burn and poly):
         #  Do exploration
-        e += 1  # exploration count'
-        theta = theta_p
-        bnn.update_param(theta)
+        e += 1  # exploration steps counter
+        theta = theta_p; bnn.update_param(theta)  # update parameters
         U_nn = U_nn_p  # Neural Network potential energy update
         U_gp = U_gp_p  # GP potential Energy update
         U = U_p  # Potential Energy Update
@@ -238,30 +111,27 @@ for t in range(T):
         #  Do sampling
         K = torch.sum(r ** 2) / 2
         Kp = torch.sum(rp ** 2) / 2
-        alpha = -U_p - Kp + U + K
+        alpha = -U_p - Kp + U + K  # Acceptance probability in log-space
         if torch.log(torch.rand(1)) < alpha:
-            theta = theta_p
-            bnn.update_param(theta)
+            theta = theta_p; bnn.update_param(theta)  # Accept proposal theta_p
             U_nn = U_nn_p  # Neural Network potential energy update
             U_gp = U_gp_p  # GP potential Energy update
             U = U_p  # Potential Energy Update
-
-            f_cum = f_cum + fp
-            u_cum = u_cum + up
-            s = s + 1
             u_interpolate = bnn.forward(x_interpolate)
-            u_interpolate_cum = u_interpolate_cum + u_interpolate
-            u_samples = torch.cat((u_samples, u_interpolate), dim=1)
+            u_samples[s, :] = u_interpolate.flatten()
             plt.plot(x_interpolate, u_interpolate.data, 'b', alpha=0.02)
 
-            fbar = gp_pred(up, u_interpolate, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
-            f_samples = torch.cat((f_samples, fbar), dim=1)
+            #fbar = gp.gp_pred(up, u_interpolate, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
+            f_hat = bnn.gp_pred(up, u_interpolate, y)
+            f_samples[s, :] = f_hat.flatten()
 
+            s = s + 1  # Number of samples accepted counter
 
 
         else:
+            # No sample. Keep current position/parameter
             bnn.update_param(theta)
-    print(t, ' : ', s, ' : ', e)
+    print(t, ' : ', s, ' : ', e)  # Print progress
 
 plt.xlabel(r'$x$')
 plt.ylabel(r'$M(x)=u$')
@@ -269,13 +139,9 @@ plt.title(r'Each sample, $M_i$, of the probabilistic mapping $M$')
 plt.grid()
 plt.savefig('./Figures/M_samples.pdf')
 plt.show()
-u_samples = u_samples.t()
-f_samples = f_samples.t()
+u_samples = u_samples[0:s, :]
+f_samples = f_samples[0:s, :]
 # %% Show results. Average over samples
-yhat = f_cum / s
-uhat = u_cum / s
-uhat_interpolate = u_interpolate_cum / s
-
 u_samples_store = u_samples
 u_samples_box = u_samples
 f_samples_box = f_samples
@@ -307,6 +173,8 @@ plt.grid()
 plt.savefig('./Figures/estimated_f_cf_'+str(thold_x)+'.pdf')
 plt.show()
 
+
+
 #%% Calculate Kernel mean and Variance
 K_tensor = torch.zeros((bnn.N, bnn.N, s))
 for i in range(s):
@@ -317,7 +185,6 @@ for i in range(s):
 K_mean = torch.mean(K_tensor, dim=2)
 plt.imshow(K_mean.data)
 plt.title(r'Mean kernel, $\bar{K}_{**}^{}$. $\Delta=$'+str(2*thold_x))
-plt.clim(0.95, bnn.sigma2_f)
 plt.colorbar()
 plt.savefig('./Figures/mean_kernel_'+str(thold_x)+'.pdf')
 plt.show()
@@ -325,68 +192,13 @@ plt.show()
 K_std = torch.std(K_tensor, dim=2)
 plt.imshow(K_std.data)
 plt.title(r'Standard deviation of sampled kernels, $\sqrt{V[K_{**}^{}]}$. $\Delta=$'+str(2*thold_x))
-plt.clim(0, 0.030)
 plt.colorbar()
 plt.savefig('./Figures/std_kernel_'+str(thold_x)+'.pdf')
 plt.show()
-
-#%%
-for j in range(s):
-    plt.imshow(K_tensor[:, :, j].data)
-    plt.clim(0.95, 1)
-    plt.colorbar()
-    plt.savefig('./Figures/kernel_movie/'+str(j)+'.png')
-    plt.draw()
-    plt.clf()
-    plt.close('all')
-
-
 
 #%% Plot all latent space samples
 plt.plot(x_interpolate, u_samples_box.data.t(), 'b', alpha=0.002)
 plt.title(r'All samples in $u$-space. $M(X_*^{} ;\theta_s)=U_*^{(s)}$')
 plt.grid()
 plt.savefig('./Figures/M_samples_'+str(thold_x)+'.pdf')
-plt.show()
-
-#%%
-fbar = gp_pred(uhat, u_mean, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
-fbar_upper = gp_pred(uhat, u_upper, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
-fbar_lower = gp_pred(uhat, u_lower, y, bnn.l, bnn.sigma2_f, bnn.sigma2_n, bnn.N)
-
-plt.scatter(x_space, y, 15, 'g', label='Observations')
-plt.plot(x_interpolate, fbar.data, 'r', label=r'GP-fit on $\hat{u}$')
-plt.plot(x_interpolate, fbar_upper.data, '--r', label=r'GP-fit on $\hat{u}+\sqrt{V[M]}$')
-plt.plot(x_interpolate, fbar_lower.data, '--r',  label=r'GP-fit on $\hat{u}-\sqrt{V[M]}$')
-plt.legend()
-plt.xlabel('x')
-plt.ylabel('y')
-plt.savefig('./Figures/observations_interpolate.pdf')
-plt.grid()
-plt.show()
-
-#%% Plot Latent space
-plt.plot(x_space, uhat.data)
-plt.grid()
-plt.legend(['Mhat(x) = uhat'])
-plt.xlabel('x')
-plt.ylabel('u')
-plt.show()
-
-# Plot Latent space predictions
-plt.plot(x_interpolate, uhat_interpolate.data)
-plt.grid()
-plt.legend(['Mhat(x_interpolate) = uhat_interpolate'])
-plt.xlabel('x')
-plt.ylabel('u')
-plt.show()
-
-# Plot Targets and filtered values yhat
-plt.scatter(x_space, y, 15, 'g')
-plt.scatter(x_space, yhat.data, 15, 'r')
-plt.grid()
-plt.legend(['Observations', 'Fitted Values'])
-plt.xlabel('x')
-plt.ylabel('y')
-plt.savefig('./Figures/observations_fit.pdf')
 plt.show()

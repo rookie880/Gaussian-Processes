@@ -1,13 +1,10 @@
 #%%
 import random
-
+import numpy as np
 import torch
 from torch import nn
-import matplotlib.pyplot as plt
 from src.models import gp_functions as gp
-from src.models import function_generator as fg
 from torch.optim import Adam
-from torch.utils.data import Dataset
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
 
@@ -34,12 +31,11 @@ class NN(nn.Module):
         self.l = 0
         self.N = 0
         self.sigma2_f = 0
-        self.sigma2_n = 0
-        self.sigma_prior = 0
+        self.sigma2_n = torch.tensor(0)
         self.total_no_param = 0
 
+        # Optimizer
         self.optm = Adam(self.parameters(), lr=0.001)
-
 
     def forward(self, x):
         x = self.L1(x)
@@ -50,19 +46,20 @@ class NN(nn.Module):
         return x
 
     def train_step(self, x, y, N, optimizer):
-        self.zero_grad()
-        u = self.forward(x)
-        loss = gp.NLML(u, y, N, self.l, self.sigma2_f, self.sigma2_n)
-        loss.backward()
-        optimizer.step()
+        self.zero_grad()  # reset gradient
+        u = self.forward(x)  # perform forward pass to enter u-space
+        loss = gp.NLML(u, y, N, self.l, self.sigma2_f, self.sigma2_n)  # evaluate negative log marginal likelihood (NLML)
+        loss.backward()  # Back propagation
+        optimizer.step()  # steepest decent step.
         return loss
 
     def train_nn(self, x_space, y, EPOCHS, BATCH_SIZE):
+        loss = np.nan
         for epoch in range(EPOCHS):
             idx = random.sample(range(self.N), BATCH_SIZE)
             x_train = x_space[idx, :]
             y_train = y[idx, :]
-            loss = self.train_step(x_train, y_train, BATCH_SIZE, self.optm)
+            loss = self.train_step(x_train, y_train, BATCH_SIZE, self.optm)  # perform steepest descent
         return loss
 
     def get_param(self):
@@ -75,44 +72,16 @@ class NN(nn.Module):
         return out
 
     def update_param(self, theta_param):
+        # theta_param is a vector consisting of all neural network parameter
+        # Load theta_param into the neural network parameter
         theta_dict = self.state_dict()
-        c = 0
+        c = 0  # index to monitor how far we are in theta_param
+        # Construct a parameter dictionary from theta_param
         for param_tensor in theta_dict:
-            s = theta_dict[param_tensor].size()
-            n = s.numel()
-            param = torch.reshape(theta_param[c:c + n], s)
+            s = theta_dict[param_tensor].size()  # Get size of current weight matrix
+            n = s.numel()  # number of elements
+            param = torch.reshape(theta_param[c:c + n], s)  # reshape the part of theta_param
             c = c + n
-            theta_dict[param_tensor] = param
-        self.load_state_dict(theta_dict)
-
-
-
-# net = NN()
-# y, x_space = fg.wall_pulse_func(1, 1, net.N, net.sigma2_n)
-# net.train_nn(x_space, y, EPOCHS=2000, BATCH_SIZE=50)
-#
-#
-# # Plot observations
-# plt.plot(x_space, y)
-# plt.ylabel('y')
-# plt.xlabel('x')
-# plt.legend(['y(x)'])
-# plt.grid()
-# plt.savefig('y.pdf')
-# plt.show()
-#
-#
-# uhat = net.forward(x_space)
-# yhat = gp.gp_uspace(net, uhat, y)
-# yhatx = gp.gp_uspace(net, x_space, y)
-#
-# plt.scatter(x_space, yhat.data, 10, 'r')
-# plt.scatter(x_space, yhatx.data, 10, 'b')
-# plt.scatter(x_space, y, 10, 'g')
-# plt.grid()
-# plt.show()
-#
-# plt.plot(x_space, uhat.data)
-# plt.grid()
-# plt.show()
+            theta_dict[param_tensor] = param  # store in the parameter dictionary
+        self.load_state_dict(theta_dict)  # update parameter dictionary
 
