@@ -13,8 +13,6 @@ class BNN(nn.Module):
         self.L3_fi = self.L2_fo
         self.L3_fo = 1
 
-        self.structure = torch.tensor([[self.L1_fi, self.L1_fo], [self.L2_fi, self.L2_fo], [self.L3_fi, self.L3_fo]])
-
         self.L1 = nn.Linear(self.L1_fi, self.L1_fo)
         self.A1 = nn.Tanh()
         self.L2 = nn.Linear(self.L2_fi, self.L2_fo)
@@ -30,7 +28,6 @@ class BNN(nn.Module):
         self.sigma2_n = torch.tensor(0)
         self.sigma2_prior = 0
         self.K_module = gpytorch.kernels.RBFKernel()
-
 
     def forward(self, x):
         x = self.L1(x)

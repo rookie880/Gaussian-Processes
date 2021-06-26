@@ -71,7 +71,6 @@ grad_U = bnn.grad_calc(U)
 u_samples = torch.zeros((T, bnn.N))  # u-space samples
 f_samples = torch.zeros((T, bnn.N))  # Prediction from each u sample
 G = torch.zeros(T)  # \grad E_U(theta) Gradient L2-norm for each t.
-U_nn_p = np.nan; U_gp_p = np.nan; up = torch.zeros(bnn.N, 1)
 
 # interpolating/prediction input points
 x_interpolate = torch.reshape(torch.linspace(-5, 5, 200), (200, 1))
