@@ -5,11 +5,11 @@ import gpytorch
 K_module = gpytorch.kernels.RBFKernel()
 
 
-def se_kern(u_kern, lengthscale, sigma2_f):
-    K_module.lengthscale = lengthscale*lengthscale
-    temp = K_module(u_kern)
-    out = sigma2_f*temp.evaluate()
-    return out
+def se_kern(x, l, sigma2_f):
+    K_module.l = l*l
+    temp = K_module(x)
+    K = sigma2_f*temp.evaluate()
+    return K
 
 
 def gp_prior(model, u_prior):
@@ -31,8 +31,8 @@ def gp(model, x, y, alt_flag):
     #   -f_hat= E[f |theta,x,y]
     # atl_flag switch between two posteriors.
 
-    u_pred = model.forward(x)
-    K_pred = se_kern(u_pred, model.l, model.sigma2_f)
+    u = model.forward(x)
+    K_pred = se_kern(u, model.l, model.sigma2_f)
     B = K_pred + model.sigma2_n * torch.eye(model.N)
 
     # Posterior that use p(y | f)p(f|x)

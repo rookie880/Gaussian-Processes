@@ -11,7 +11,6 @@ torch.pi = torch.acos(torch.zeros(1)).item() * 2
 K_module = gpytorch.kernels.RBFKernel()
 
 
-
 # %% Generate Data
 bnn = gp_bnn_class.BNN()
 bnn.sigma2_likelihood = 1
@@ -53,9 +52,7 @@ beta = 0.2  # Proportion of exploration stage, take beta proportion of each cycl
 ep_space, t_burn, poly, cyclic = fg.ep_generate(T, M, ep0=0.0008, ep_max=0.0008, ep_min=0.000002,
                                                 gamma=0.99, t_burn=500, ep_type="Cyclic")
 
-## HMCMC ##
-
-# Warm start using neural network minimizing negative log marginal likelihood (NLML)
+# HMCMC.Warm start using neural network minimizing negative log marginal likelihood (NLML)
 net = gp_nn_class.NN()
 net.l = bnn.l; net.N = bnn.N; net.sigma2_f = bnn.sigma2_f; net.sigma2_n = bnn.sigma2_n  # Same hyper-parameters as the BNN
 net.train_nn(x_space=x_space, y=y, EPOCHS=2000, BATCH_SIZE=50)

@@ -54,13 +54,11 @@ class BNN(nn.Module):
         return
 
     def energy_nn(self, x, theta_param):
-        u_latent = self.forward(x)
-        # temp = x - u # Bias toward M(x) = x = u, will only work for n = m
-        temp = u_latent  # Bias toward M(x) = 0
+        u = self.forward(x)
 
-        ll_nn = torch.sum(temp ** 2) / self.sigma2_likelihood
+        ll_nn = torch.sum(u ** 2) / self.sigma2_likelihood
         lp_nn = torch.sum(theta_param ** 2) / self.sigma2_prior
-        return (ll_nn + lp_nn), u_latent
+        return (ll_nn + lp_nn), u
 
     def update_param(self, theta_param):
         # theta_param is a vector consisting of all neural network parameter
@@ -79,7 +77,9 @@ class BNN(nn.Module):
     # calculate dE_U(theta)/dtheta
     def grad_calc(self, energy):
         self.zero_grad()  # reset gradients
+        print('ok')
         temp = grad(energy, self.parameters())  # dE_U(theta)/dtheta stores as dictionary
+        print(temp)
         grads = []
         # convert temp into vector
         for g in temp:
