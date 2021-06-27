@@ -9,6 +9,17 @@ torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
 
 class NN(nn.Module):
+    #  The class NN Inherits from torch.nn, and implements function that can
+    #  minimize NLML of the model y(x) = f(M(x)) + eta.
+    #  eta is white noise with sigma2_n variance
+    #  M(x) is the nerural network
+    #  f(M(x)) - GP(0, k(M(x), M(x'))) where k is the Squared Exponential kernel
+    #  Use:
+    #   net = gp_nn_class.NN()
+    #   Set hyperparameters. lengthscale, sigma2_f, sigma2_n and N = no. observations
+    #   net.train_nn(x_space=x_space, y=y, EPOCHS=2000, BATCH_SIZE=50) # Train
+    #   theta = net.get_param()  # Get the warm start parameters #  Get optimal parameters found
+    #   net.get_total_no_param()  # Total number of parameters
     def __init__(self):
         super().__init__()
         self.L1_fi = 1
@@ -17,9 +28,6 @@ class NN(nn.Module):
         self.L2_fo = 32
         self.L3_fi = self.L2_fo
         self.L3_fo = 1
-        # self.l4_fi = self.L3_fo; self.l4_fo = 1
-
-        self.structure = torch.tensor([[self.L1_fi, self.L1_fo], [self.L2_fi, self.L2_fo], [self.L3_fi, self.L3_fo]])
 
         self.L1 = nn.Linear(self.L1_fi, self.L1_fo)
         self.A1 = nn.Tanh()
@@ -44,6 +52,15 @@ class NN(nn.Module):
         x = self.A2(x)
         x = self.L3(x)
         return x
+
+    def get_total_no_param(self):
+        theta_dict = self.state_dict()
+        t1 = []
+        for param_tensor in theta_dict:
+            t2 = theta_dict[param_tensor]
+            t1.append(t2.view(-1))
+        t1 = torch.cat(t1)
+        self.total_no_param = len(t1)
 
     def train_step(self, x, y, N, optimizer):
         self.zero_grad()  # reset gradient

@@ -4,6 +4,10 @@ from torch.autograd import grad
 import gpytorch
 
 class BNN(nn.Module):
+    #  The class BNN Inherits from torch.nn, and implements function that can
+    #  The class BNN contain functions for calculating energies and
+    #  potential energy gradient used for HMCMC
+
     def __init__(self):
         super().__init__()
         self.L1_fi = 1
@@ -27,7 +31,8 @@ class BNN(nn.Module):
         self.sigma2_f = 0
         self.sigma2_n = torch.tensor(0)
         self.sigma2_prior = 0
-        self.K_module = gpytorch.kernels.RBFKernel()
+
+        # Aux Param
 
     def forward(self, x):
         x = self.L1(x)
@@ -51,14 +56,13 @@ class BNN(nn.Module):
             t1.append(t2.view(-1))
         t1 = torch.cat(t1)
         self.total_no_param = len(t1)
-        return
 
     def energy_nn(self, x, theta_param):
-        u = self.forward(x)
+        #u = self.forward(x)
 
-        ll_nn = torch.sum(u ** 2) / self.sigma2_likelihood
+        ll_nn = torch.sum(x ** 2) / self.sigma2_likelihood
         lp_nn = torch.sum(theta_param ** 2) / self.sigma2_prior
-        return (ll_nn + lp_nn), u
+        return ll_nn + lp_nn
 
     def update_param(self, theta_param):
         # theta_param is a vector consisting of all neural network parameter
@@ -77,9 +81,7 @@ class BNN(nn.Module):
     # calculate dE_U(theta)/dtheta
     def grad_calc(self, energy):
         self.zero_grad()  # reset gradients
-        print('ok')
         temp = grad(energy, self.parameters())  # dE_U(theta)/dtheta stores as dictionary
-        print(temp)
         grads = []
         # convert temp into vector
         for g in temp:
@@ -105,9 +107,10 @@ class BNN(nn.Module):
         #   -f_hat= E[f |theta,x,y]
         # atl_flag switch between two posteriors.
 
-        u_pred = self.forward(x)
-        K_pred = self.se_kern(u_pred, self.l, self.sigma2_f)
+
+        K_pred = self.se_kern(x, x)
         B = K_pred + self.sigma2_n * torch.eye(self.N)
+
 
         # Posterior that use p(y | f)p(f|x)
         if not alt_flag:
@@ -122,24 +125,37 @@ class BNN(nn.Module):
             _, B_pred_det = torch.linalg.slogdet(B)
             U_gp = y.t() @ alpha_pred + B_pred_det  # p(y | x)
             f_hat = K_pred @ alpha_pred
-            return f_hat, U_gp
+        return f_hat, U_gp
 
-    def se_kern(self, u_kern, l, sigma2_f):
-        self.K_module.l = l*l
-        temp = self.K_module(u_kern)
-        out = sigma2_f*temp.evaluate()
-        return out
+    def se_kern(self, x1, x2):
+        K_module = gpytorch.kernels.RBFKernel()
+        K_module.lengthscale = self.l*self.l
+        temp = K_module(x1, x2)
+        K = self.sigma2_f*temp.evaluate()
+        return K
 
     def gp_pred(self, x_obs, x_star, yobs):
         # Perform prediction f_hat = E[f_* | x_*, x, y]
-        self.K_module.l = self.l*self.l
-        temp = self.K_module(x_star, x_obs)
-        K_star_obs = self.sigma2_f*temp.evaluate()
-        temp = self.K_module(x_obs, x_obs)
-        K_obs_obs = self.sigma2_f*temp.evaluate()
+        K_star_obs = self.se_kern(x_star, x_obs)
+        K_obs_obs = self.se_kern(x_obs, x_obs)
 
         B = K_obs_obs+self.sigma2_n*torch.eye(self.N)
-        alpha_pred, B_LU = torch.solve(yobs, B)
-        f_hat = K_star_obs @ alpha_pred
+        alpha, _ = torch.solve(yobs, B)
+        f_hat = K_star_obs @ alpha
         return f_hat
+
+    def gp_pred_var(self, x_obs, x_star, yobs):
+        # Perform prediction f_hat = E[f_* | x_*, x, y]
+        K_star_obs = self.se_kern(x_star, x_obs)
+        K_obs_obs = self.se_kern(x_obs, x_obs)
+        K_star_star = self.se_kern(x_star, x_star)
+
+        B = K_obs_obs+self.sigma2_n*torch.eye(self.N)
+        alpha, _ = torch.solve(yobs, B)
+        f_hat = K_star_obs @ alpha
+
+        v, _ = torch.solve(K_star_obs.t(), B)
+        V = K_star_star - K_star_obs @ v
+        V = torch.diag(V.data)
+        return f_hat.data.flatten(), V
 
