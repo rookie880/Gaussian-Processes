@@ -14,19 +14,24 @@ for i = 1:N
     end
 end
 
-col = jet(5);
+n = 15;
+col = jet(n);
 figure(1)
-for i = 1:5
+h = fill([-5, -5, 5, 5], [-1.96, 1.96, 1.96, -1.96], 'b');
+set(h,'facealpha',.07)
+hold on
+for i = 1:n
     f = mvnrnd(zeros(N,1), K);
-    plot(x, f, 'color', col(i,:))
+    plot(x, f, 'color', col(i,:), 'LineWidth', 1)
     hold on
 end
+ylim([-3,3])
 title('Gaussian Process Priors using the SE kernel, $$l = 0.5, \sigma^2_f  = 1$$', 'Interpreter', 'Latex')
 xlabel('x')
 ylabel('f')
 hold off
 
-
+%%
 a = 0.3;
 sigma_n = 0.2;
 eta = mvnrnd(zeros(N,1), sigma_n^2*eye(N));

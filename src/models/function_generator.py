@@ -60,3 +60,12 @@ def wall_pulse_func(fc, a, N, sigma2_n):
     out = out + torch.flip(out, [0, 1])
     eta = torch.normal(torch.zeros(N, 1), torch.ones(N, 1)*torch.sqrt(sigma2_n))
     return out+eta, out, torch.reshape(t_space, (N, 1))
+
+
+def wall_pulse_func_true(fc, a, N, sigma2_n):
+    t_space = torch.linspace(0, 10.9321+5.4860, N)
+    out = torch.exp(-a*t_space**2)*torch.exp(1j*2*torch.pi*fc*t_space)
+    out = torch.reshape(out.real, (N, 1))
+    out = out + torch.flip(out, [0, 1])
+    eta = torch.normal(torch.zeros(N, 1), torch.ones(N, 1)*torch.sqrt(sigma2_n))
+    return out+eta, out, torch.reshape(t_space, (N, 1))

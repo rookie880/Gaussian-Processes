@@ -3,6 +3,7 @@ from torch import nn
 from torch.autograd import grad
 import gpytorch
 
+
 class BNN(nn.Module):
     #  The class BNN Inherits from torch.nn, and implements function that can
     #  The class BNN contain functions for calculating energies and
@@ -32,7 +33,7 @@ class BNN(nn.Module):
         self.sigma2_n = torch.tensor(0)
         self.sigma2_prior = 0
 
-        # Aux Param
+        self.ws_u = torch.zeros((self.N, 1))  # Warm start u
 
     def forward(self, x):
         x = self.L1(x)
@@ -58,9 +59,9 @@ class BNN(nn.Module):
         self.total_no_param = len(t1)
 
     def energy_nn(self, x, theta_param):
-        #u = self.forward(x)
-
-        ll_nn = torch.sum(x ** 2) / self.sigma2_likelihood
+        temp = x - self.ws_u  # Biased towards the warm start solution
+        #temp = x               # Biased toward U = 0
+        ll_nn = torch.sum(temp ** 2) / self.sigma2_likelihood
         lp_nn = torch.sum(theta_param ** 2) / self.sigma2_prior
         return ll_nn + lp_nn
 
@@ -92,7 +93,7 @@ class BNN(nn.Module):
     # Get current parameters as a vector
     def get_param(self):
         theta_dict = self.state_dict()  # Parameter dictionary
-        out = []  # Parameter vector init
+        out = []                        # Parameter vector init
         for param_tensor in theta_dict:
             temp = theta_dict[param_tensor]
             out.append(temp.view(-1))
@@ -100,19 +101,10 @@ class BNN(nn.Module):
         return out
 
     def energy_gp(self, x, y, alt_flag):
-        # Calculates:
-        #   -potential energy E_U(theta)
-        #       by evaluating the numerator of the
-        #       log posterior log(p(theta | x,y))
-        #   -f_hat= E[f |theta,x,y]
-        # atl_flag switch between two posteriors.
-
-
         K_pred = self.se_kern(x, x)
         B = K_pred + self.sigma2_n * torch.eye(self.N)
 
-
-        # Posterior that use p(y | f)p(f|x)
+        # posterior that use p(y | f)p(f|x)
         if not alt_flag:
             alpha_pred, B_LU = torch.solve(y, B)
             f_hat = K_pred @ alpha_pred  # E[f | x, y, theta]
@@ -120,7 +112,9 @@ class BNN(nn.Module):
             _, K_pred_det = torch.linalg.slogdet(K_pred + 1e-4*torch.eye(self.N))
             lp_gp = f_hat.t() @ alpha_pred + K_pred_det  # log(p(f | x))
             U_gp = lp_gp + ll_gp
-        else:  # posterior that use p(y | u)
+
+        # posterior that use p(y | u)
+        else:
             alpha_pred, B_LU = torch.solve(y, B)
             _, B_pred_det = torch.linalg.slogdet(B)
             U_gp = y.t() @ alpha_pred + B_pred_det  # p(y | x)
@@ -138,22 +132,23 @@ class BNN(nn.Module):
         # Perform prediction f_hat = E[f_* | x_*, x, y]
         K_star_obs = self.se_kern(x_star, x_obs)
         K_obs_obs = self.se_kern(x_obs, x_obs)
-
         B = K_obs_obs+self.sigma2_n*torch.eye(self.N)
         alpha, _ = torch.solve(yobs, B)
         f_hat = K_star_obs @ alpha
         return f_hat
 
     def gp_pred_var(self, x_obs, x_star, yobs):
-        # Perform prediction f_hat = E[f_* | x_*, x, y]
+        # Perform prediction f_hat = E[f_* | x_*, x, y] and V = V[f_* | x_*, x, y]
         K_star_obs = self.se_kern(x_star, x_obs)
         K_obs_obs = self.se_kern(x_obs, x_obs)
         K_star_star = self.se_kern(x_star, x_star)
-
         B = K_obs_obs+self.sigma2_n*torch.eye(self.N)
         alpha, _ = torch.solve(yobs, B)
+
+        # Mean
         f_hat = K_star_obs @ alpha
 
+        # Variance
         v, _ = torch.solve(K_star_obs.t(), B)
         V = K_star_star - K_star_obs @ v
         V = torch.diag(V.data)
