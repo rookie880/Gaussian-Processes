@@ -202,23 +202,8 @@ plt.savefig('./Figures/std_kernel_' + str(delta) + '.pdf')
 plt.show()
 
 # %% Manifold Gaussian Process
-
 net.train_nn(x_space=x_space, y=y, EPOCHS=10000, BATCH_SIZE=50)  # Train M for warm start
 theta = net.get_param()  # Get the warm start parameters
-
-#%%
-
-u_space = net.forward(x_space)  # Save warm start to use for neural network likelihood
-u_star_nn = net.forward(x_star)
-f_star_nn, V = bnn.gp_pred_var(u_space, u_star_nn, y)  # prediction mean and variance
-plt.plot(x_star, u_star_nn.data)
-plt.show()
-plt.scatter(x_space, y)
-plt.plot(x_star, f_star_nn, 'r')
-plt.plot(x_star, f_star_nn.data + 1.96 * torch.sqrt(V.data + bnn.sigma2_n), '--r')
-plt.plot(x_star, f_star_nn.data - 1.96 * torch.sqrt(V.data + bnn.sigma2_n), '--r')
-plt.grid()
-plt.show()
 
 #%%
 def fitFunc(x_star, u_obs, u_star, y):
@@ -237,14 +222,3 @@ u_test = u_samples[sample, :]
 u_obs = u_samples_p[sample, :]
 
 fitFunc(x_star, u_obs, u_test, y)
-
-
-
-
-# %% Plot all latent space samples
-
-# plt.plot(x_star, u_samples.data.t(), 'b', alpha=0.002)
-# plt.title(r'All samples in $u$-space. $M(X_*^{} ;\theta_s)=U_*^{(s)}$')
-# plt.grid()
-# plt.savefig('./Figures/M_samples_'+str(delta)+'.pdf')
-# plt.show()
